@@ -9,6 +9,7 @@ import android.os.Binder
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.lanbrowserrelay.Config
 import com.lanbrowserrelay.LanBrowserApp
 import com.lanbrowserrelay.R
@@ -154,7 +155,7 @@ class LanServerService : Service() {
 
         fun start(context: Context) {
             val intent = Intent(context, LanServerService::class.java).apply { action = ACTION_START }
-            context.startForegroundService(intent)
+            ContextCompat.startForegroundService(context, intent)
         }
 
         fun stop(context: Context) {
