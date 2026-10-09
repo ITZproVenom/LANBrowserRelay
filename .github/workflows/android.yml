@@ -23,9 +23,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # GitHub's ubuntu runner image already includes the Android SDK.
-      # Do not use android-actions/setup-android@v3 here: it requests the
-      # obsolete SDK package named "tools", which now makes sdkmanager fail.
+      # Do not use android-actions/setup-android@v3: it requests the
+      # obsolete SDK package "tools", which makes sdkmanager fail.
       - name: Install required Android SDK packages
         shell: bash
         run: |
@@ -40,26 +39,19 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.2
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Ensure Gradle wrapper exists
-        shell: bash
-        run: |
-          if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version 8.2
-          fi
-          chmod +x gradlew
-          test -s gradle/wrapper/gradle-wrapper.properties
+        with:
+          gradle-version: '8.2'
 
       - name: Assemble debug APK
-        run: ./gradlew --no-daemon assembleDebug --stacktrace
+        run: gradle --no-daemon assembleDebug --stacktrace
 
       - name: Run unit tests
-        run: ./gradlew --no-daemon test --stacktrace
+        run: gradle --no-daemon test --stacktrace
 
       - name: Run Android lint
-        run: ./gradlew --no-daemon lintDebug --stacktrace
+        run: gradle --no-daemon lintDebug --stacktrace
 
       - name: Verify APK
         shell: bash
