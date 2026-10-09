@@ -1,0 +1,11 @@
+{
+  "name": "lanbrowserrelay-security-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:browser-security": "node scripts/security-integration.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.52.0"
+  }
+}
