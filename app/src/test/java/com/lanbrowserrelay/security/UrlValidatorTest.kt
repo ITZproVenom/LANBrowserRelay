@@ -38,7 +38,7 @@ class UrlValidatorTest {
     fun filenameIsSafeForContentDisposition() {
         val name = UrlValidator.safeFilename("../../my\\\\file?.zip")
         assertFalse(name.contains('/'))
-        assertFalse(name.contains('\\\\'))
+        assertFalse(name.contains(92.toChar()))
         assertFalse(name.contains('?'))
         assertTrue(name.isNotBlank())
     }
