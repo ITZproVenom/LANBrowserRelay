@@ -102,7 +102,17 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
       return n
      }catch(e:IOException){if(!finished)finish(if(call.isCanceled())"CANCELLED" else "FAILED",e.message);closed=true;cleanup();throw e}
     }
-    override fun close(){if(!finished)finish("CANCELLED","Client disconnected or transfer cancelled");closed=true;cleanup()}
+    override fun close(){
+     if(!finished){
+      when {
+       call.isCanceled() -> finish("CANCELLED")
+       length != null && transferred == length -> finish("COMPLETED")
+       else -> finish("CANCELLED","Client disconnected or transfer cancelled")
+      }
+     }
+     closed=true
+     cleanup()
+    }
    }
    val output=if(length!=null&&length<DownloadPolicy.MAX_BYTES)newFixedLengthResponse(Response.Status.OK,type,transfer,length)else newChunkedResponse(Response.Status.OK,type,transfer)
    val enc=java.net.URLEncoder.encode(filename,"UTF-8").replace("+","%20")
