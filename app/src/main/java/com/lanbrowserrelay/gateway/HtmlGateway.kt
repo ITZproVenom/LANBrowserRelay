@@ -110,7 +110,7 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
                 }
                 response.close()
                 currentUrl = UrlValidator.isAllowedUrl(nextUrl).getOrElse {
-                    throw IOException("Redirect to prohibited destination: \${it.message}")
+                    throw IOException("Redirect to prohibited destination: ${it.message}")
                 }.toString()
             } else {
                 val validation = UrlValidator.isAllowedUrl(response.request.url.toString())
@@ -146,7 +146,7 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
         }
 
         val attrPattern = Pattern.compile(
-            "(?i)(\\b(?:href|src|action)\\s*=\\s*)([\\\"'])([^\\\"']+)\\2",
+            "(?i)(\\b(?:href|src|action)\\s*=\\s*)([\"'])([^\"']+)\\2",
             Pattern.CASE_INSENSITIVE
         )
         val matcher = attrPattern.matcher(html)
@@ -158,15 +158,15 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
             val rewritten = rewriteUrl(value, base)
             matcher.appendReplacement(
                 sb,
-                java.util.regex.Matcher.quoteReplacement("\$prefix\$quote\$rewritten\$quote")
+                java.util.regex.Matcher.quoteReplacement("$prefix$quote$rewritten$quote")
             )
         }
         matcher.appendTail(sb)
         var result = sb.toString()
 
         if (!result.contains("<base ", ignoreCase = true)) {
-            val baseTag = "<base href=\"\${escapeHtml(pageUrl)}\">"
-            result = result.replaceFirst(Regex("(?i)<head[^>]*>"), "\$0\n\$baseTag")
+            val baseTag = "<base href=\"${escapeHtml(pageUrl)}\">"
+            result = result.replaceFirst(Regex("(?i)<head[^>]*>"), "$0\n$baseTag")
         }
         return result
     }
@@ -184,7 +184,7 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
         return try {
             val resolved = base.resolve(trimmed).toURL().toString()
             if (UrlValidator.isAllowedUrl(resolved).isFailure) trimmed
-            else "\$baseProxyPath?url=\${java.net.URLEncoder.encode(resolved, "UTF-8")}"
+            else "$baseProxyPath?url=${java.net.URLEncoder.encode(resolved, "UTF-8")}"
         } catch (_: Exception) {
             trimmed
         }
@@ -196,15 +196,15 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>\${escapeHtml(title)}</title>
+          <title>${escapeHtml(title)}</title>
           <style>
             body{font-family:system-ui,sans-serif;background:#121212;color:#eee;padding:2rem;text-align:center}
             h1{color:#F44336} a{color:#00BCD4}
           </style>
         </head>
         <body>
-          <h1>\${escapeHtml(title)}</h1>
-          <p>\${escapeHtml(message)}</p>
+          <h1>${escapeHtml(title)}</h1>
+          <p>${escapeHtml(message)}</p>
           <p><a href="/">Return to browser home</a></p>
           <p style="color:#888;font-size:.9rem">This site could not be loaded through the LAN gateway.</p>
         </body>
