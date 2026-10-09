@@ -31,9 +31,11 @@ data class DownloadProgress(
  * Never writes file contents to disk.
  */
 class DownloadManager(
-    private val maxBytes: Long = Config.DEFAULT_MAX_DOWNLOAD_BYTES,
-    private val maxConcurrent: Int = Config.MAX_CONCURRENT_DOWNLOADS
+    maxBytes: Long = Config.DEFAULT_MAX_DOWNLOAD_BYTES,
+    maxConcurrent: Int = Config.MAX_CONCURRENT_DOWNLOADS
 ) {
+    private val maxBytes = minOf(maxBytes.coerceAtLeast(1L), Config.DEFAULT_MAX_DOWNLOAD_BYTES)
+    private val maxConcurrent = maxConcurrent.coerceAtLeast(1)
     private val client = OkHttpClient.Builder()
         .connectTimeout(Config.CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
         .readTimeout(Config.READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
@@ -42,11 +44,105 @@ class DownloadManager(
         .build()
 
     private val active = ConcurrentHashMap<String, DownloadProgress>()
+    private val relayedIds = ConcurrentHashMap.newKeySet<String>()
     private val concurrentCount = AtomicInteger(0)
     private val totalBytesServed = AtomicLong(0)
 
-    fun getActiveDownloads(): List<DownloadProgress> = active.values.toList()
+    fun getActiveDownloads(): List<DownloadProgress> = active.values.filter {
+        it.status == DownloadProgress.Status.STARTING || it.status == DownloadProgress.Status.STREAMING
+    }
+
+    fun getRecentDownloads(): List<DownloadProgress> =
+        active.values.sortedByDescending { it.id }.take(MAX_HISTORY)
+
     fun getTotalBytesServed(): Long = totalBytesServed.get()
+
+    /** Reserve a stream handled by LanHttpServer without staging its bytes to disk. */
+    fun beginRelayedStream(id: String, url: String): Boolean {
+        if (!relayedIds.add(id)) return false
+        if (concurrentCount.incrementAndGet() > maxConcurrent) {
+            concurrentCount.decrementAndGet()
+            relayedIds.remove(id)
+            active[id] = DownloadProgress(
+                id, url, "unknown", 0, null,
+                DownloadProgress.Status.FAILED, "Too many concurrent downloads"
+            )
+            trimHistory()
+            return false
+        }
+        active[id] = DownloadProgress(
+            id, url, "Preparing download", 0, null, DownloadProgress.Status.STARTING
+        )
+        trimHistory()
+        return true
+    }
+
+    fun updateRelayedStream(
+        id: String,
+        filename: String,
+        contentLength: Long?,
+        bytesTransferred: Long,
+        speedBps: Long
+    ) {
+        if (id !in relayedIds) return
+        active.computeIfPresent(id) { _, old ->
+            if (old.status == DownloadProgress.Status.CANCELLED) {
+                old
+            } else {
+                val updatedBytes = maxOf(old.bytesTransferred, bytesTransferred)
+                totalBytesServed.addAndGet((updatedBytes - old.bytesTransferred).coerceAtLeast(0L))
+                old.copy(
+                    filename = filename,
+                    contentLength = contentLength,
+                    bytesTransferred = updatedBytes,
+                    status = DownloadProgress.Status.STREAMING,
+                    speedBps = speedBps,
+                    error = null
+                )
+            }
+        }
+    }
+
+    fun finishRelayedStream(
+        id: String,
+        status: DownloadProgress.Status,
+        bytesTransferred: Long,
+        error: String? = null
+    ) {
+        val reserved = relayedIds.remove(id)
+        active.computeIfPresent(id) { _, old ->
+            val updatedBytes = maxOf(old.bytesTransferred, bytesTransferred)
+            totalBytesServed.addAndGet((updatedBytes - old.bytesTransferred).coerceAtLeast(0L))
+            val finalStatus = if (
+                old.status == DownloadProgress.Status.CANCELLED ||
+                status == DownloadProgress.Status.CANCELLED
+            ) DownloadProgress.Status.CANCELLED else status
+            old.copy(
+                bytesTransferred = updatedBytes,
+                status = finalStatus,
+                speedBps = 0,
+                error = if (finalStatus == DownloadProgress.Status.CANCELLED) null else error
+            )
+        }
+        if (reserved) concurrentCount.decrementAndGet()
+        trimHistory()
+    }
+
+    private fun trimHistory() {
+        if (active.size <= MAX_HISTORY) return
+        val terminal = active.entries.filter {
+            it.key !in relayedIds && it.value.status !in listOf(
+                DownloadProgress.Status.STARTING,
+                DownloadProgress.Status.STREAMING
+            )
+        }
+        val excess = (active.size - MAX_HISTORY).coerceAtLeast(0)
+        terminal.take(excess).forEach { active.remove(it.key, it.value) }
+    }
+
+    companion object {
+        private const val MAX_HISTORY = 50
+    }
 
     fun streamTo(
         id: String,
@@ -54,12 +150,6 @@ class DownloadManager(
         output: OutputStream,
         onProgress: ((DownloadProgress) -> Unit)? = null
     ): DownloadProgress {
-        if (concurrentCount.get() >= maxConcurrent) {
-            val p = DownloadProgress(id, urlString, "unknown", 0, null, DownloadProgress.Status.FAILED, "Too many concurrent downloads")
-            active[id] = p
-            return p
-        }
-
         val validation = UrlValidator.isAllowedUrl(urlString)
         if (validation.isFailure) {
             val p = DownloadProgress(id, urlString, "unknown", 0, null, DownloadProgress.Status.FAILED, validation.exceptionOrNull()?.message)
@@ -68,7 +158,13 @@ class DownloadManager(
         }
         val url = validation.getOrThrow()
 
-        concurrentCount.incrementAndGet()
+        if (concurrentCount.incrementAndGet() > maxConcurrent) {
+            concurrentCount.decrementAndGet()
+            val p = DownloadProgress(id, urlString, "unknown", 0, null, DownloadProgress.Status.FAILED, "Too many concurrent downloads")
+            active[id] = p
+            trimHistory()
+            return p
+        }
         var progress = DownloadProgress(id, urlString, "download.bin", 0, null, DownloadProgress.Status.STARTING)
         active[id] = progress
         onProgress?.invoke(progress)
