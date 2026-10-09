@@ -1,47 +1,9 @@
-# LAN Browser Relay
+# LANBrowserRelay
 
-Android TV hosts a local web server. Open its LAN address on your phone (Safari/Chrome). Browse and download through the TV’s Ethernet connection. Downloads are streamed with a 100 MB limit and never stored on the TV.
+Install the APK on Android TV and open it. The service starts automatically. Open the LAN URL shown on the TV in Safari or Chrome on the same network.
 
-**No login / no pairing.** Open the app → service starts automatically → open the shown URL on your phone.
+No login, pairing, companion app, or PC is required. Downloads are streamed through bounded memory, capped at 100,000,000 bytes, and never written to TV storage. Redirects are revalidated, and transfer progress and cancellation are exposed.
 
-## TV app
+This is an HTTP gateway, not a full browser engine. DRM, WebSockets, service workers, strict CSP, and complex cross-origin JavaScript may not work. Download speed depends on the network and remote host.
 
-- Starts the LAN server automatically
-- Clears caches on every startup
-- Shows only: LAN address, logs, download speed, and a small read-only browser preview
-- All real browsing and downloads happen in the phone’s browser
-
-## Phone
-
-1. Open the URL shown on the TV (e.g. `http://192.168.1.50:8080`)
-2. Search Google or enter any URL
-3. Downloads stream through the TV and appear as normal browser downloads
-
-## Build
-
-```bash
-./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
-```
-
-Requires JDK 17 + Android SDK (compileSdk 34).
-
-## Install on Android TV
-
-```bash
-adb connect <tv-ip>
-adb install -r app-debug.apk
-```
-
-Open the app — it starts serving immediately.
-
-## Limits
-
-- Default max download size: 100 MB (decimal)
-- Streaming only (no permanent file storage on TV)
-- Basic SSRF protection (private/loopback destinations blocked for upstream fetches)
-- Not every website works through the gateway (CSP, complex apps, DRM, etc.)
-
-## License
-
-MIT
+GitHub Actions builds, tests, lints, verifies, and uploads the debug APK on pull requests.
