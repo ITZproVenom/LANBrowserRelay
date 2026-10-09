@@ -28,7 +28,12 @@ class UrlValidatorTest {
             "http://[fc00::1]/",
             "http://[fe80::1]/",
             "http://[2001:db8::1]/",
-            "http://[::ffff:127.0.0.1]/"
+            "http://[::ffff:127.0.0.1]/",
+            "http://[2002:7f00:1::1]/",
+            "http://[2001:2::1]/",
+            "http://[3fff::1]/",
+            "http://[64:ff9b::808:808]/",
+            "http://user:pass@example.com/"
         ).forEach { url ->
             assertTrue("Expected blocked URL: $url", UrlValidator.validate(url).isFailure)
         }

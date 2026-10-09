@@ -58,6 +58,46 @@ class DownloadManagerTest {
     }
 
     @Test
+    fun cancellationCanWinBeforeCallIsInstalledAndRemainsTerminal() {
+        val manager = DownloadManager()
+        assertTrue(manager.begin("race", "https://example.com/file"))
+        assertTrue(manager.cancel("race"))
+        assertTrue(manager.isCancelled("race"))
+        manager.finish("race", "COMPLETED", 17)
+        manager.progress("race", "file", 100, 20, 1)
+        val transfer = manager.recent().first { it.id == "race" }
+        assertEquals("CANCELLED", transfer.status)
+        assertEquals(17L, transfer.bytes)
+        assertFalse(manager.cancel("race"))
+    }
+
+    @Test
+    fun completedTransferCannotBeReusedOrOverwrittenByLateCallback() {
+        val manager = DownloadManager()
+        assertTrue(manager.begin("once", "https://example.com/file"))
+        manager.finish("once", "COMPLETED", 9)
+        assertFalse(manager.begin("once", "https://example.com/other"))
+        manager.finish("once", "FAILED", 0, "late error")
+        val transfer = manager.recent().first { it.id == "once" }
+        assertEquals("COMPLETED", transfer.status)
+        assertEquals(9L, transfer.bytes)
+    }
+
+    @Test
+    fun transfersAreIsolatedAndLimitedPerBrowserSession() {
+        val manager = DownloadManager()
+        assertTrue(manager.begin("a1", "https://example.com/a1", "session-a"))
+        assertTrue(manager.begin("a2", "https://example.com/a2", "session-a"))
+        assertFalse(manager.begin("a3", "https://example.com/a3", "session-a"))
+        assertTrue(manager.begin("b1", "https://example.com/b1", "session-b"))
+        assertEquals(2, manager.activeCount("session-a"))
+        assertEquals(1, manager.recent("session-b").size)
+        assertFalse(manager.cancel("a1", "session-b"))
+        assertTrue(manager.cancel("a1", "session-a"))
+        assertEquals(0, manager.recent("session-b").count { it.status == "CANCELLED" })
+    }
+
+    @Test
     fun limitExceededStateIsPreserved() {
         val manager = DownloadManager()
         val id = "dl-limit"

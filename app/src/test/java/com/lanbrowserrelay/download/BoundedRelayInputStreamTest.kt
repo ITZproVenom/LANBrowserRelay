@@ -153,6 +153,27 @@ class BoundedRelayInputStreamTest {
     }
 
     @Test
+    fun failureDuringExactLimitProbeIsTerminalOnce() {
+        var errors = 0
+        var disconnected = 0
+        val stream = BoundedRelayInputStream(
+            ExplodingStream(afterBytes = limit.toInt()),
+            limit,
+            onError = { _, _ -> errors++ },
+            onDisconnected = { disconnected++ }
+        )
+        try {
+            readAll(stream)
+            fail("The failing exact-limit probe must propagate")
+        } catch (_: IOException) {
+            // expected
+        }
+        stream.close()
+        assertEquals(1, errors)
+        assertEquals(0, disconnected)
+    }
+
+    @Test
     fun clientDisconnectTriggersDisconnectedCallback() {
         var disconnectedAt = -1L
         val stream = BoundedRelayInputStream(
