@@ -1,47 +1,20 @@
 # LAN Browser Relay
 
-Android TV hosts a local web server. Open its LAN address on your phone (Safari/Chrome). Browse and download through the TV’s Ethernet connection. Downloads are streamed with a 100 MB limit and never stored on the TV.
+Clean Android TV LAN browser and Ethernet download relay.
 
-**No login / no pairing.** Open the app → service starts automatically → open the shown URL on your phone.
+## Use
+1. Connect the Android TV to the router by Ethernet.
+2. Install and open the TV app. The service starts automatically.
+3. Connect the phone to the same LAN and open the TV URL shown on screen, usually http://TV-IP:8080.
 
-## TV app
+The phone UI is hosted by the TV. The TV fetches pages and streams files to the phone.
 
-- Starts the LAN server automatically
-- Clears caches on every startup
-- Shows only: LAN address, logs, download speed, and a small read-only browser preview
-- All real browsing and downloads happen in the phone’s browser
+## Requirements
+- No login, pairing, companion app, or PC.
+- Hard 100,000,000-byte (decimal 100 MB) download cap.
+- Bounded memory streaming, with no intentional staging of downloaded file contents on TV storage.
+- Cancels upstream work on cancellation or disconnect.
+- Validates redirects and blocks local/reserved targets.
+- This HTML proxy is not a full browser engine. Sites requiring advanced JavaScript, service workers, strict CSP or cross-origin APIs may not render correctly.
 
-## Phone
-
-1. Open the URL shown on the TV (e.g. `http://192.168.1.50:8080`)
-2. Search Google or enter any URL
-3. Downloads stream through the TV and appear as normal browser downloads
-
-## Build
-
-```bash
-./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
-```
-
-Requires JDK 17 + Android SDK (compileSdk 34).
-
-## Install on Android TV
-
-```bash
-adb connect <tv-ip>
-adb install -r app-debug.apk
-```
-
-Open the app — it starts serving immediately.
-
-## Limits
-
-- Default max download size: 100 MB (decimal)
-- Streaming only (no permanent file storage on TV)
-- Basic SSRF protection (private/loopback destinations blocked for upstream fetches)
-- Not every website works through the gateway (CSP, complex apps, DRM, etc.)
-
-## License
-
-MIT
+GitHub Actions builds the APK, runs tests and lint, checks APK integrity and uploads an artifact.
