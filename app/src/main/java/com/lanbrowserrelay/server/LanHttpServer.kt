@@ -109,7 +109,7 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
    output.addHeader("Content-Disposition","attachment; filename=\"$filename\"; filename*=UTF-8''$enc");output.addHeader("X-Download-Id",id);return output
   }catch(e:Exception){
    calls.remove(id);try{upstream?.close()}catch(_:Exception){}
-   downloads.finish(id,if(selectedCall?.isCanceled()==true"CANCELLED" else "FAILED",0,e.message?: "Download failed")
+   downloads.finish(id,if(selectedCall?.isCanceled() == true) "CANCELLED" else "FAILED",0,e.message ?: "Download failed")
    log("Download failed: ${e.message}");return newFixedLengthResponse(Response.Status.INTERNAL_ERROR,MIME_PLAINTEXT,e.message?: "Download failed")
   }
  }
