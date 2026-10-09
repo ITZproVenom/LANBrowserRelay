@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LAN Browser Relay</string>
+    <string name="service_notification_title">LAN Browser Relay Active</string>
+    <string name="service_notification_text">Serving on %1$s:%2$d</string>
+    <string name="start_service">Start Service</string>
+    <string name="stop_service">Stop Service</string>
+    <string name="status_running">Running</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="lan_address">LAN Address</string>
+    <string name="port">Port</string>
+    <string name="download_limit">Download Limit (MB)</string>
+    <string name="connected_clients">Connected Clients</string>
+    <string name="active_downloads">Active Downloads</string>
+    <string name="pairing_code">Pairing Code</string>
+    <string name="warning_http">Warning: Traffic is unencrypted HTTP on local network.</string>
+</resources>
