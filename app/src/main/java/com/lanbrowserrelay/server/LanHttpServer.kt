@@ -164,13 +164,15 @@ class LanHttpServer(
                 .build()
 
             val opened = openCheckedDownload(id, url, client)
-            call = opened.first
-            upstream = opened.second
+            val downloadCall = opened.first
+            val downloadResponse = opened.second
+            call = downloadCall
+            upstream = downloadResponse
 
-            if (!upstream.isSuccessful) {
-                val statusCode = upstream.code
-                upstream.close()
-                activeCalls.remove(id, call)
+            if (!downloadResponse.isSuccessful) {
+                val statusCode = downloadResponse.code
+                downloadResponse.close()
+                activeCalls.remove(id, downloadCall)
                 downloadManager.finishRelayedStream(
                     id, DownloadProgress.Status.FAILED, 0, "Upstream HTTP ${statusCode}"
                 )
@@ -181,18 +183,18 @@ class LanHttpServer(
                 )
             }
 
-            val body = upstream.body
+            val body = downloadResponse.body
             if (body == null) {
-                upstream.close()
-                activeCalls.remove(id, call)
+                downloadResponse.close()
+                activeCalls.remove(id, downloadCall)
                 downloadManager.finishRelayedStream(id, DownloadProgress.Status.FAILED, 0, "Empty response body")
                 return newFixedLengthResponse(Response.Status.BAD_GATEWAY, MIME_PLAINTEXT, "Empty response body")
             }
 
             val contentLength = body.contentLength().takeIf { it >= 0L }
             if (contentLength != null && contentLength > maxBytes) {
-                upstream.close()
-                activeCalls.remove(id, call)
+                downloadResponse.close()
+                activeCalls.remove(id, downloadCall)
                 val message = "File exceeds the ${maxBytes / 1_000_000} MB download limit"
                 downloadManager.finishRelayedStream(id, DownloadProgress.Status.LIMIT_EXCEEDED, 0, message)
                 log("Rejected oversized Content-Length=${contentLength} (id=${id})")
@@ -203,12 +205,12 @@ class LanHttpServer(
                 )
             }
 
-            val finalUrl = upstream.request.url.toString()
+            val finalUrl = downloadResponse.request.url.toString()
             val filename = filenameHint?.takeIf { it.isNotBlank() }
                 ?.let { UrlValidator.safeFilename(it) }
-                ?: UrlValidator.extractFilename(upstream.header("Content-Disposition"), finalUrl)
+                ?: UrlValidator.extractFilename(downloadResponse.header("Content-Disposition"), finalUrl)
             val safeName = UrlValidator.safeFilename(filename)
-            val contentType = upstream.header("Content-Type") ?: "application/octet-stream"
+            val contentType = downloadResponse.header("Content-Type") ?: "application/octet-stream"
             val upstreamStream = body.byteStream()
             downloadManager.updateRelayedStream(id, safeName, contentLength, 0, 0)
 
@@ -225,13 +227,13 @@ class LanHttpServer(
                     if (finished) return
                     finished = true
                     downloadManager.finishRelayedStream(id, status, transferred, error)
-                    activeCalls.remove(id, call)
+                    activeCalls.remove(id, downloadCall)
                 }
 
                 private fun closeUpstream() {
                     try { upstreamStream.close() } catch (_: Exception) {}
-                    try { upstream?.close() } catch (_: Exception) {}
-                    activeCalls.remove(id, call)
+                    try { downloadResponse.close() } catch (_: Exception) {}
+                    activeCalls.remove(id, downloadCall)
                 }
 
                 override fun read(): Int {
@@ -299,7 +301,7 @@ class LanHttpServer(
                         return count
                     } catch (e: IOException) {
                         if (!finished) {
-                            val cancelled = call?.isCanceled == true
+                            val cancelled = downloadCall.isCanceled == true
                             finish(
                                 if (cancelled) DownloadProgress.Status.CANCELLED else DownloadProgress.Status.FAILED,
                                 if (cancelled) null else (e.message ?: "Streaming failed")
@@ -313,7 +315,7 @@ class LanHttpServer(
 
                 override fun close() {
                     if (!finished) {
-                        val cancelled = call?.isCanceled == true
+                        val cancelled = downloadCall.isCanceled == true
                         val completeKnownLength = contentLength != null &&
                             transferred == contentLength && !cancelled
                         finish(
