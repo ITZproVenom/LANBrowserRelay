@@ -190,7 +190,7 @@ class LanServerService : Service() {
                     interfaceName = networkInterface.name,
                     address = address.hostAddress ?: return@mapNotNull null,
                     isUp = try { networkInterface.isUp } catch (_: Exception) { false },
-                    isLoopback = address.isLoopbackAddress || networkInterface.isLoopback,
+                    isLoopback = address.isLoopbackAddress || try { networkInterface.isLoopback } catch (_: Exception) { false },
                     isLinkLocal = address.isLinkLocalAddress,
                     isActive = networkInterface.name == activeName,
                     isEthernet = isEthernet
