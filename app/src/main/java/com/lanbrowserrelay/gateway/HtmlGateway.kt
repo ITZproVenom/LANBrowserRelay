@@ -155,7 +155,8 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
             val prefix = matcher.group(1)
             val quote = matcher.group(2)
             val value = matcher.group(3)
-            val rewritten = rewriteUrl(value, base)
+            val isLink = prefix.contains("href", ignoreCase = true)
+            val rewritten = rewriteUrl(value, base, isLink)
             matcher.appendReplacement(
                 sb,
                 java.util.regex.Matcher.quoteReplacement("$prefix$quote$rewritten$quote")
@@ -171,7 +172,7 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
         return result
     }
 
-    private fun rewriteUrl(raw: String, base: URI): String {
+    private fun rewriteUrl(raw: String, base: URI, isLink: Boolean): String {
         val trimmed = raw.trim()
         if (trimmed.isEmpty() ||
             trimmed.startsWith("#") ||
@@ -182,9 +183,22 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
         ) return trimmed
 
         return try {
-            val resolved = base.resolve(trimmed).toURL().toString()
-            if (UrlValidator.isAllowedUrl(resolved).isFailure) trimmed
-            else "$baseProxyPath?url=${java.net.URLEncoder.encode(resolved, "UTF-8")}"
+            val resolvedUri = base.resolve(trimmed)
+            val resolved = resolvedUri.toURL().toString()
+            if (UrlValidator.isAllowedUrl(resolved).isFailure) {
+                trimmed
+            } else {
+                val path = resolvedUri.path.lowercase()
+                val isDownload = isLink && DOWNLOAD_EXTENSIONS.any { path.endsWith(it) }
+                val route = if (isDownload) DOWNLOAD_PATH else baseProxyPath
+                val target = java.net.URLEncoder.encode(resolved, "UTF-8")
+                if (isDownload) {
+                    val filename = resolvedUri.path.substringAfterLast('/').ifBlank { "download.bin" }
+                    "${route}?url=${target}&filename=${java.net.URLEncoder.encode(filename, "UTF-8")}"
+                } else {
+                    "${route}?url=${target}"
+                }
+            }
         } catch (_: Exception) {
             trimmed
         }
@@ -221,5 +235,12 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
     companion object {
         private const val MAX_RESPONSE_BYTES = 5_000_000
         private const val MAX_REDIRECTS = 5
+        private const val DOWNLOAD_PATH = "/api/download"
+        private val DOWNLOAD_EXTENSIONS = setOf(
+            ".apk", ".zip", ".7z", ".rar", ".tar", ".gz", ".iso", ".dmg",
+            ".exe", ".msi", ".ipa", ".deb", ".rpm", ".mp4", ".mkv", ".mov",
+            ".mp3", ".m4a", ".flac", ".wav", ".pdf", ".doc", ".docx",
+            ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".torrent", ".bin"
+        )
     }
 }
