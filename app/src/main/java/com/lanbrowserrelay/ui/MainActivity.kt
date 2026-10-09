@@ -44,7 +44,6 @@ class MainActivity:Activity(){
  private fun refresh(){val s=service?:return;val running=s.isRunning();status.text=if(running)"● Server running" else "◌ Waiting for LAN";status.setTextColor(if(running)Color.rgb(88,217,196) else Color.YELLOW)
   address.text=if(running)"http://${s.address()}:${s.port()}" else "LAN URL: unavailable"
   stats.text="Active downloads: ${s.downloads().activeCount()} · Relayed: ${s.downloads().totalBytesServed()/1_000_000} MB · Requests: ${s.clients()}"
-  logs.text=s.logs().joinToString("
-").ifBlank{"Waiting for requests…"};loadPreview()
+  logs.text=s.logs().joinToString("  •  ").ifBlank{"Waiting for requests…"};loadPreview()
  }
 }
