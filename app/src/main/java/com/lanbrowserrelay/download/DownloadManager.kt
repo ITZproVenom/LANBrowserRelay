@@ -42,11 +42,103 @@ class DownloadManager(
         .build()
 
     private val active = ConcurrentHashMap<String, DownloadProgress>()
+    private val relayedIds = ConcurrentHashMap.newKeySet<String>()
     private val concurrentCount = AtomicInteger(0)
     private val totalBytesServed = AtomicLong(0)
 
-    fun getActiveDownloads(): List<DownloadProgress> = active.values.toList()
+    companion object {
+        private const val MAX_HISTORY = 50
+    }
+
+    fun getActiveDownloads(): List<DownloadProgress> = active.values.filter {
+        it.status == DownloadProgress.Status.STARTING || it.status == DownloadProgress.Status.STREAMING
+    }
+
+    fun getRecentDownloads(): List<DownloadProgress> = active.values
+        .sortedByDescending { it.id }
+        .take(MAX_HISTORY)
+
     fun getTotalBytesServed(): Long = totalBytesServed.get()
+
+    /** Registers a download that LanHttpServer streams directly to the phone. */
+    fun beginRelayedStream(id: String, url: String): Boolean {
+        if (!relayedIds.add(id)) return false
+        if (concurrentCount.incrementAndGet() > maxConcurrent) {
+            concurrentCount.decrementAndGet()
+            relayedIds.remove(id)
+            active[id] = DownloadProgress(
+                id, url, "download.bin", 0, null,
+                DownloadProgress.Status.FAILED, "Too many concurrent downloads"
+            )
+            trimHistory()
+            return false
+        }
+        active[id] = DownloadProgress(
+            id, url, "Preparing download", 0, null, DownloadProgress.Status.STARTING
+        )
+        return true
+    }
+
+    fun updateRelayedStream(
+        id: String,
+        filename: String,
+        contentLength: Long?,
+        bytesTransferred: Long,
+        speedBps: Long
+    ) {
+        if (id !in relayedIds) return
+        active.computeIfPresent(id) { _, previous ->
+            if (previous.status == DownloadProgress.Status.CANCELLED) return@computeIfPresent previous
+            val safeBytes = maxOf(previous.bytesTransferred, bytesTransferred)
+            val delta = safeBytes - previous.bytesTransferred
+            if (delta > 0) totalBytesServed.addAndGet(delta)
+            previous.copy(
+                filename = filename,
+                contentLength = contentLength,
+                bytesTransferred = safeBytes,
+                status = DownloadProgress.Status.STREAMING,
+                speedBps = speedBps,
+                error = null
+            )
+        }
+    }
+
+    fun finishRelayedStream(
+        id: String,
+        status: DownloadProgress.Status,
+        bytesTransferred: Long,
+        error: String? = null
+    ) {
+        val wasTracked = relayedIds.remove(id)
+        active.computeIfPresent(id) { _, previous ->
+            val safeBytes = maxOf(previous.bytesTransferred, bytesTransferred)
+            val delta = safeBytes - previous.bytesTransferred
+            if (delta > 0) totalBytesServed.addAndGet(delta)
+            val finalStatus = if (
+                previous.status == DownloadProgress.Status.CANCELLED ||
+                status == DownloadProgress.Status.CANCELLED
+            ) DownloadProgress.Status.CANCELLED else status
+            previous.copy(
+                bytesTransferred = safeBytes,
+                status = finalStatus,
+                speedBps = 0,
+                error = if (finalStatus == DownloadProgress.Status.CANCELLED) null else error
+            )
+        }
+        if (wasTracked) concurrentCount.decrementAndGet()
+        trimHistory()
+    }
+
+    private fun trimHistory() {
+        if (active.size <= MAX_HISTORY) return
+        val finished = active.entries.filter {
+            it.key !in relayedIds && it.value.status !in listOf(
+                DownloadProgress.Status.STARTING, DownloadProgress.Status.STREAMING
+            )
+        }.sortedBy { it.value.bytesTransferred }
+        finished.take((active.size - MAX_HISTORY).coerceAtLeast(0))
+            .forEach { active.remove(it.key, it.value) }
+    }
 
     fun streamTo(
         id: String,
