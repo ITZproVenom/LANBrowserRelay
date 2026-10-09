@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>LAN Browser Relay</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div id="app">
+    <div id="browserScreen" class="screen">
+      <header class="toolbar">
+        <div class="nav-buttons">
+          <button id="backBtn" title="Back" aria-label="Back">←</button>
+          <button id="fwdBtn" title="Forward" aria-label="Forward">→</button>
+          <button id="reloadBtn" title="Reload" aria-label="Reload">↻</button>
+          <button id="homeBtn" title="Home" aria-label="Home">⌂</button>
+        </div>
+        <form id="navForm" class="address-bar">
+          <input id="urlInput" type="text" placeholder="Search Google or enter URL" enterkeyhint="go" autocomplete="off">
+          <button type="submit" id="goBtn">Go</button>
+        </form>
+        <div class="status-area">
+          <span id="connIndicator" class="dot ok" title="Connected"></span>
+          <button id="dlPanelBtn" title="Downloads">↓</button>
+        </div>
+      </header>
+      <div id="titleBar">
+        <span id="pageTitle">Home</span>
+        <span id="pageUrl" class="muted"></span>
+      </div>
+      <div id="content">
+        <iframe id="viewer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" title="Page content"></iframe>
+        <div id="homePanel" class="home-panel">
+          <h2>Search the web</h2>
+          <form id="homeSearch">
+            <input type="search" id="homeQuery" placeholder="Google search…" autofocus>
+            <button type="submit">Search</button>
+          </form>
+          <p class="limit-note">Download limit: <strong id="limitDisplay">100 MB</strong> per file</p>
+          <p class="muted">All browsing and downloads go through the TV. No login required.</p>
+        </div>
+      </div>
+      <div id="dlPanel" class="panel hidden">
+        <div class="panel-header">
+          <h3>Downloads</h3>
+          <button id="closeDlPanel">✕</button>
+        </div>
+        <div id="dlList"></div>
+        <p class="muted small">Files stream through the TV. Nothing is stored permanently on the TV.</p>
+      </div>
+      <div id="loadingOverlay" class="overlay hidden">
+        <div class="spinner"></div>
+        <p>Loading…</p>
+      </div>
+    </div>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>
