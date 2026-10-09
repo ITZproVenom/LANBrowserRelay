@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -11,7 +10,7 @@ const web = path.join(root, 'app/src/main/assets/web');
 const readWeb = name => readFile(path.join(web, name));
 const csrf = 'test-only-csrf-capability';
 const session = 'a'.repeat(64);
-const counters = { authorizedStatus: 0, deniedStatus: 0, authorizedControl: 0, deniedControl: 0 };
+const counters = { authorizedStatus: 0, statusWithoutOrigin: 0, deniedStatus: 0, authorizedControl: 0, deniedControl: 0 };
 
 function makeServer(handler) {
   const server = createServer((req, res) => { Promise.resolve(handler(req, res)).catch(error => {
@@ -43,6 +42,10 @@ const contentServer = await makeServer(async (req, res) => {
     const hostile = `<!doctype html><html><head><meta charset="utf-8"><title>Hostile page</title><script src="/link-bridge.js"></script></head><body>
       <script>
         window.attackResults = {};
+        try { window.attackResults.frameCookie = document.cookie; }
+        catch (_) { window.attackResults.frameCookie = 'blocked'; }
+        try { window.attackResults.parentCsrf = parent.document.querySelector('meta[name="relay-csrf-token"]').content; }
+        catch (_) { window.attackResults.parentCsrf = 'blocked'; }
         try { parent.document.body.dataset.pwned = 'yes'; window.attackResults.parentRead = 'allowed'; }
         catch (_) { window.attackResults.parentRead = 'blocked'; }
         try { parent.fetch('/api/status'); window.attackResults.parentApi = 'allowed'; }
@@ -90,12 +93,20 @@ uiServer = await makeServer(async (req, res) => {
     return send(res, 200, await readWeb(name), { 'Content-Type': name.endsWith('.js') ? 'application/javascript; charset=utf-8' : 'text/css; charset=utf-8' });
   }
   if (url.pathname.startsWith('/api/')) {
-    const isSameOrigin = req.headers.origin === origin && req.headers['sec-fetch-site'] === 'same-origin';
+    const sameOriginFetch = req.headers['sec-fetch-site'] === 'same-origin';
+    // Same-origin fetch GETs are allowed to omit Origin; CSRF and Fetch Metadata still apply.
+    const originAllowed = req.method === 'GET'
+      ? (!req.headers.origin || req.headers.origin === origin)
+      : req.headers.origin === origin;
     const hasSession = req.headers.cookie?.includes(`lbr_session=${session}`);
     const csrfOk = req.headers['x-relay-csrf'] === csrf;
-    const allowed = isSameOrigin && hasSession && csrfOk;
+    const allowed = sameOriginFetch && originAllowed && hasSession && csrfOk;
     if (url.pathname === '/api/status' && req.method === 'GET') {
-      if (allowed) { counters.authorizedStatus++; return send(res, 200, JSON.stringify({running:true,activeCount:0,downloads:[]} ), {'Content-Type':'application/json'}); }
+      if (allowed) {
+        counters.authorizedStatus++;
+        if (!req.headers.origin) counters.statusWithoutOrigin++;
+        return send(res, 200, JSON.stringify({running:true,activeCount:0,downloads:[]} ), {'Content-Type':'application/json'});
+      }
       counters.deniedStatus++; return send(res, 403, '{"error":"Forbidden"}', {'Content-Type':'application/json'});
     }
     if (url.pathname === '/api/cancel' || url.pathname === '/api/download') {
@@ -118,15 +129,17 @@ try {
   await frame.waitForFunction(() => window.attackResults && window.attackResults.cancelAttempt);
   const results = await frame.evaluate(() => window.attackResults);
   assert.equal(results.parentRead, 'blocked', 'hostile frame must not read or mutate the parent DOM');
+  assert.ok(!results.frameCookie.includes('lbr_session'), 'hostile frame must not read the HttpOnly session cookie');
+  assert.equal(results.parentCsrf, 'blocked', 'hostile frame must not read the UI CSRF token');
   assert.equal(await page.locator('body').getAttribute('data-pwned'), null, 'parent DOM must remain unchanged');
   assert.equal(results.parentApi, 'blocked', 'same-origin UI API must not be reachable through parent Window');
   assert.equal(await page.locator('#address').inputValue(), 'https://example.com/hostile', 'forged control messages must not alter the UI address');
   assert.equal(await page.locator('#viewer').getAttribute('sandbox'), 'allow-scripts allow-forms');
-  assert.ok(counters.authorizedStatus > 0, 'trusted UI should successfully use its session and CSRF token');
+  assert.ok(counters.authorizedStatus > 0, `trusted UI status failed; observed=${JSON.stringify(counters)}`);
   assert.ok(counters.deniedStatus > 0, 'hostile frame API reads should be denied');
   assert.equal(counters.authorizedControl, 0, 'hostile content must not trigger any control action');
   assert.ok(counters.deniedControl > 0, 'hostile state-changing requests should be rejected');
-  console.log('PASS: hostile HTML cannot read/mutate the parent or invoke protected relay controls');
+  console.log('PASS: hostile HTML cannot read/mutate the parent or invoke protected relay controls', JSON.stringify(counters));
 } finally {
   if (browser) await browser.close();
   await new Promise(resolve => uiServer.close(resolve));
