@@ -19,6 +19,22 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install browser test dependencies
+        run: npm ci
+      - name: Install headless browser
+        run: npx playwright install --with-deps chromium
+      - name: Check browser JavaScript syntax and security contracts
+        run: |
+          node --check app/src/main/assets/web/app.js
+          node --check app/src/main/assets/web/link-bridge.js
+          node --check scripts/security-integration.mjs
+          node scripts/security-check.js
+      - name: Hostile-page browser integration test
+        run: npm run test:browser-security
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.2'
@@ -27,27 +43,34 @@ jobs:
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -n 1)"
+            SDKMANAGER="$(printf '%s\n' "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -n 1)"
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-      - name: Check browser JavaScript syntax
-        run: node --check app/src/main/assets/web/app.js
       - name: Assemble debug APK
         run: gradle --no-daemon assembleDebug --stacktrace
       - name: Unit tests
         run: gradle --no-daemon test --stacktrace
       - name: Lint
         run: gradle --no-daemon lintDebug --stacktrace
-      - name: Verify APK
+      - name: Verify debug APK integrity, signature, and version
         shell: bash
         run: |
+          set -euo pipefail
           APK=app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK" || { echo "APK missing or empty"; exit 1; }
-          file "$APK"
           unzip -t "$APK" >/dev/null
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" > "$RUNNER_TEMP/debug-badging.txt"
+          python3 - "$RUNNER_TEMP/debug-badging.txt" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r"package:.*?versionCode='([0-9]+)'.*?versionName='([^']+)'", text)
+          if not match or match.groups() != ("1000", "0.1.0-dev"):
+              raise SystemExit(f"Unexpected debug APK version metadata: {match.groups() if match else 'unreadable'}")
+          print("Debug APK version metadata verified: 0.1.0-dev / 1000")
+          PY
           echo "APK verified: $(stat -c%s "$APK") bytes"
       - uses: actions/upload-artifact@v4
         with:
