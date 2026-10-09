@@ -19,6 +19,7 @@
         <form id="navForm" class="address-bar">
           <input id="urlInput" type="text" placeholder="Search Google or enter URL" enterkeyhint="go" autocomplete="off">
           <button type="submit" id="goBtn">Go</button>
+          <button type="button" id="downloadCurrentBtn" title="Download current URL">↓ Save</button>
         </form>
         <div class="status-area">
           <span id="connIndicator" class="dot ok" title="Connected"></span>
@@ -30,7 +31,7 @@
         <span id="pageUrl" class="muted"></span>
       </div>
       <div id="content">
-        <iframe id="viewer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" title="Page content"></iframe>
+        <iframe id="viewer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads" title="Page content"></iframe>
         <div id="homePanel" class="home-panel">
           <h2>Search the web</h2>
           <form id="homeSearch">
