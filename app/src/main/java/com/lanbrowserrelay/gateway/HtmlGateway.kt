@@ -1,4 +1,5 @@
 package com.lanbrowserrelay.gateway
+import com.lanbrowserrelay.DownloadPolicy
 import com.lanbrowserrelay.security.UrlValidator
 import okhttp3.Dns
 import okhttp3.OkHttpClient
@@ -18,8 +19,9 @@ class HtmlGateway(private val maxBytes:Int=5_000_000){
  }).followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).build()
  data class Page(val type:String,val bytes:ByteArray,val status:Int,val url:String)
  fun fetch(raw:String):Page{
+  val deadline=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(DownloadPolicy.MAX_PAGE_REQUEST_DURATION_MS)
   val safe=UrlValidator.validate(raw).getOrElse{return error(403,"Blocked URL",it.message?: "Invalid URL",raw)}
-  return try{openRedirects(safe.toString()).use{r->
+  return try{openRedirects(safe.toString(),deadline).use{r->
    val url=r.request.url.toString();val type=safeMediaType(r.header("Content-Type"));val body=r.body?.byteStream()
    val bytes=if(body==null)ByteArray(0)else body.use{readBounded(it)}?:return error(413,"Page too large","Gateway view limit is 5 MB. Use Download for files.",url)
    if(type.contains("text/html",true)||type.contains("application/xhtml",true)){
@@ -27,11 +29,14 @@ class HtmlGateway(private val maxBytes:Int=5_000_000){
    }else Page(type,bytes,r.code,url)
   }}catch(e:Exception){error(502,"Could not load page",e.message?: "Network error",raw)}
  }
- private fun openRedirects(initial:String):Response{
+ private fun openRedirects(initial:String,deadlineNanos:Long):Response{
   var url=initial
   repeat(6){i->
+   val remaining=deadlineNanos-System.nanoTime()
+   if(remaining<=0)throw IOException("Page request deadline exceeded")
    val req=Request.Builder().url(url).header("User-Agent","Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36").header("Accept","text/html,application/xhtml+xml,*/*;q=0.8").build()
-   val r=client.newCall(req).execute()
+   val call=client.newBuilder().callTimeout(remaining,TimeUnit.NANOSECONDS).build().newCall(req)
+   val r=call.execute()
    if(r.code in 300..399&&!r.header("Location").isNullOrBlank()){
     if(i==5){r.close();throw IOException("Too many redirects")}
     val next=URI(url).resolve(r.header("Location")!!).toString();r.close()
@@ -49,8 +54,8 @@ class HtmlGateway(private val maxBytes:Int=5_000_000){
   while(m.find()){
    val raw=m.group(3).trim()
    val target=if(raw.startsWith("#")||raw.startsWith("javascript:",true)||raw.startsWith("data:",true)||raw.startsWith("mailto:",true)||raw.startsWith("tel:",true))raw else try{
-    val resolved=base.resolve(raw).toString()
-    if(UrlValidator.validate(resolved).isFailure)raw else "/browse?url="+java.net.URLEncoder.encode(resolved,"UTF-8")
+    val resolved=base.resolve(raw)
+    if(resolved.scheme?.lowercase() !in setOf("http","https")||resolved.host.isNullOrBlank()||resolved.rawUserInfo!=null)raw else "/browse?url="+java.net.URLEncoder.encode(resolved.toString(),"UTF-8")
    }catch(_:Exception){raw}
    m.appendReplacement(out,java.util.regex.Matcher.quoteReplacement(m.group(1)+m.group(2)+target+m.group(2)))
   };m.appendTail(out)

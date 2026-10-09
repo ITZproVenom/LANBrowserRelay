@@ -6,6 +6,7 @@ object DownloadPolicy {
     const val MAX_CONCURRENT = 3
     const val MAX_CONCURRENT_PER_SESSION = 2
     const val MAX_TRANSFER_DURATION_MS = 15 * 60 * 1000L
+    const val MAX_PAGE_REQUEST_DURATION_MS = 30_000L
     const val MAX_IDLE_READ_MS = 30_000L
     const val MAX_SESSION_REQUESTS_PER_MINUTE = 120
 

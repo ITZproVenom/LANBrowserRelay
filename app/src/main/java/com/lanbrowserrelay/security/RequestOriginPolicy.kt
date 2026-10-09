@@ -28,6 +28,9 @@ object RequestOriginPolicy {
         }
     }
 
+    fun isAllowedOrigin(origin: String?, boundIpv4: String, port: Int, required: Boolean): Boolean =
+        if (origin == null) !required else isExpectedOrigin(origin, boundIpv4, port)
+
     fun isSameOriginFetch(site: String?): Boolean =
         site == null || site.equals("same-origin", ignoreCase = true)
 }

@@ -111,7 +111,9 @@
     if (!message || typeof message !== 'object' ||
         message.type !== 'lanbrowserrelay:navigate' ||
         typeof message.url !== 'string' || message.url.length > 8192 ||
-        Object.keys(message).length !== 2 || !Object.hasOwn(message, 'url') || !Object.hasOwn(message, 'type')) return;
+        Object.keys(message).length !== 2 ||
+        !Object.prototype.hasOwnProperty.call(message, 'url') ||
+        !Object.prototype.hasOwnProperty.call(message, 'type')) return;
 
     const now = Date.now();
     if (now - frameMessageWindow >= 60_000) { frameMessageWindow = now; frameMessageCount = 0; }
