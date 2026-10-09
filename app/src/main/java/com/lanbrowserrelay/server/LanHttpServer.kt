@@ -2,6 +2,7 @@ package com.lanbrowserrelay.server
 import android.content.Context
 import android.util.Log
 import com.lanbrowserrelay.DownloadPolicy
+import com.lanbrowserrelay.download.BoundedRelayInputStream
 import com.lanbrowserrelay.download.DownloadManager
 import com.lanbrowserrelay.gateway.HtmlGateway
 import com.lanbrowserrelay.security.UrlValidator
@@ -89,36 +90,43 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
    if(length!=null&&length>DownloadPolicy.MAX_BYTES){r.close();calls.remove(id,call);downloads.finish(id,"LIMIT_EXCEEDED",0,"File exceeds 100 MB limit");return json(JSONObject().put("error","File exceeds 100 MB limit").toString(),Response.Status.PAYLOAD_TOO_LARGE)}
    val filename=UrlValidator.safeFilename(hint?:UrlValidator.filenameFrom(r.header("Content-Disposition"),r.request.url.toString()))
    val type=r.header("Content-Type")?:"application/octet-stream";val input=body.byteStream()
-   var transferred=0L;var finished=false;var closed=false;var time=System.currentTimeMillis();var previous=0L;var speed=0L
-   val transfer=object:InputStream(){
-    private fun finish(state:String,error:String?=null){if(finished)return;finished=true;downloads.finish(id,state,transferred,error);calls.remove(id,call)}
-    private fun cleanup(){try{input.close()}catch(_:Exception){};try{r.close()}catch(_:Exception){};calls.remove(id,call)}
-    override fun read():Int{val b=ByteArray(1);val n=read(b,0,1);return if(n<0)-1 else b[0].toInt()and 255}
-    override fun read(b:ByteArray,off:Int,len:Int):Int{
-     if(len==0)return 0;if(closed)return -1
-     try{
-      if(transferred>=DownloadPolicy.MAX_BYTES){val extra=input.read();closed=true
-       if(extra<0){finish("COMPLETED");cleanup();log("Download complete: $filename ($transferred bytes)");return -1}
-       call.cancel();finish("LIMIT_EXCEEDED","File exceeds 100 MB limit");cleanup();throw IOException("File exceeds 100 MB limit; transfer interrupted")
-      }
-      val n=input.read(b,off,DownloadPolicy.bytesAllowed(transferred,len))
-      if(n<0){val short=length!=null&&transferred<length;closed=true;finish(if(short)"FAILED" else "COMPLETED",if(short)"Upstream ended early" else null);cleanup();return -1}
-      if(n>0){transferred+=n;val now=System.currentTimeMillis();if(now-time>=500){speed=((transferred-previous)*1000L)/(now-time).coerceAtLeast(1);time=now;previous=transferred};downloads.progress(id,filename,length,transferred,speed)}
-      return n
-     }catch(e:IOException){if(!finished)finish(if(call.isCanceled())"CANCELLED" else "FAILED",e.message);closed=true;cleanup();throw e}
-    }
-    override fun close(){
-     if(!finished){
-      when {
-       call.isCanceled() -> finish("CANCELLED")
-       length != null && transferred == length -> finish("COMPLETED")
-       else -> finish("CANCELLED","Client disconnected or transfer cancelled")
-      }
-     }
-     closed=true
-     cleanup()
-    }
-   }
+   var transferred=0L;var until=System.currentTimeMillis();var previous=0L;var speed=0L
+   fun cleanup(){try{input.close()}catch(_:Exception){};try{r.close()}catch(_:Exception){};calls.remove(id,call)}
+   val transfer=BoundedRelayInputStream(
+    input=input,
+    limitBytes=DownloadPolicy.MAX_BYTES,
+    expectedLength=length,
+    onBytes={n->
+     transferred=n;val now=System.currentTimeMillis()
+     if(now-until>=500){speed=((transferred-previous)*1000L)/(now-until).coerceAtLeast(1);until=now;previous=transferred}
+     downloads.progress(id,filename,length,transferred,speed)
+    },
+    onComplete={n,truncated->
+     transferred=n
+     downloads.finish(id,if(truncated)"FAILED" else "COMPLETED",n,if(truncated)"Upstream ended early" else null)
+calls.remove(id,call);cleanup()
+       val outcome=if(truncated)"failed (truncated)" else "complete"
+       log("Download $outcome: $filename ($n bytes)")
+    },
+    onLimitExceeded={n->
+     transferred=n
+     downloads.finish(id,"LIMIT_EXCEEDED",n,"File exceeds 100 MB limit")
+     calls.remove(id,call);call.cancel();cleanup()
+     log("Limit exceeded: $filename ($n bytes)")
+    },
+    onDisconnected={n->
+     transferred=n
+     downloads.finish(id,if(call.isCanceled())"CANCELLED" else "FAILED",n,if(call.isCanceled())"Cancelled by user" else "Client disconnected")
+     calls.remove(id,call);call.cancel();cleanup()
+     log("Transfer cancelled or disconnected: $filename ($n bytes)")
+    },
+    onError={n,message->
+     transferred=n
+     downloads.finish(id,if(call.isCanceled())"CANCELLED" else "FAILED",n,message)
+     calls.remove(id,call);call.cancel();cleanup()
+    },
+    abort={call.cancel()}
+   )
    val output=if(length!=null&&length<DownloadPolicy.MAX_BYTES)newFixedLengthResponse(Response.Status.OK,type,transfer,length)else newChunkedResponse(Response.Status.OK,type,transfer)
    val enc=java.net.URLEncoder.encode(filename,"UTF-8").replace("+","%20")
    output.addHeader("Content-Disposition","attachment; filename=\"$filename\"; filename*=UTF-8''$enc");output.addHeader("X-Download-Id",id);return output

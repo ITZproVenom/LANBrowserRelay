@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to release (e.g. v1.0.0)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2'
+
+      - name: Resolve version tag
+        id: version
+        shell: bash
+        run: |
+          VER="${{ github.event.inputs.tag || '' }}"
+          if [ -z "$VER" ]; then
+            REF="${GITHUB_REF_NAME}"
+            case "$REF" in
+              v*) VER="${REF#v}" ;;
+              *) VER="1.0.0" ;;
+            esac
+          fi
+          echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Check browser JavaScript syntax
+        run: node --check app/src/main/assets/web/app.js
+
+      - name: Generate release keystore
+        shell: bash
+        run: |
+          KEYSTORE_PASS="$(openssl rand -base64 24 | tr -d '/+= ')"
+          KEY_PASS="$KEYSTORE_PASS"
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/release.jks" \
+            -alias lanbrowserrelay -keyalg RSA -keysize 2048 -validity 7300 \
+            -storepass "$KEYSTORE_PASS" -keypass "$KEY_PASS" \
+            -dname "CN=LAN Browser Relay, O=LANBrowserRelay, C=US"
+          echo "LBR_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "LBR_KEYSTORE_PASSWORD=$KEYSTORE_PASS" >> "$GITHUB_ENV"
+          echo "LBR_KEY_ALIAS=lanbrowserrelay" >> "$GITHUB_ENV"
+          echo "LBR_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        run: gradle --no-daemon test --stacktrace
+
+      - name: Lint
+        run: gradle --no-daemon lintRelease --stacktrace
+
+      - name: Assemble release APK
+        run: gradle --no-daemon assembleRelease --stacktrace
+
+      - name: Verify, checksum and gather release metadata
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK" || { echo "Release APK missing or empty"; exit 1; }
+          unzip -t "$APK" >/dev/null
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          "$APKSIGNER" verify --verbose "$APK"
+          SIG=`"$APKSIGNER" verify --print-certs "$APK" | grep -E 'Signer #1 certificate DN|SHA-256 digest' | head -2 | tr '\n' ';'`
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$APK")
+          echo "SHA256=$SHA"; echo "SIZE=$SIZE"
+          echo "apk_size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "apk_sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "signer=$SIG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          TAG="v$VER"
+          APK="app/build/outputs/apk/release/app-release.apk"
+          SHASUM="${{ steps.apk.outputs.apk_sha256 }}"
+          SIZE_BYTES="${{ steps.apk.outputs.apk_size }}"
+          NOTES=$(cat <<EOF
+          ## LAN Browser Relay $VER
+
+          Android TV LAN browser and Ethernet download relay.
+
+          **App version:** $VER
+          **APK file size:** $(numfmt --to=iec "$SIZE_BYTES") bytes ($SIZE_BYTES)
+          **SHA-256:** \`$SHASUM\`
+          **Signing:** Signed with a CI-generated release key (not the production key). Verify with \`apksigner verify\`.
+          **API level:** minSdk 24 (Android 7.0+), targetSdk 34
+
+          ### Install
+          \`\`\`bash
+          adb connect <tv-ip>
+          adb install -r LANBrowserRelay-$VER.apk
+          \`\`\`
+          Open the app, then open the shown \`http://<tv-ip>:8080\` URL on your phone.
+
+          ### Notes
+          - Hard 100,000,000-byte download cap, enforced against bytes actually streamed.
+          - Downloads are streamed through the TV with no permanent file storage on the TV.
+          - SSRF protection blocks private/loopback/link-local destinations.
+          EOF
+          )
+          gh release create "$TAG" \
+            "$APK#LANBrowserRelay-$VER.apk" \
+            --title "LAN Browser Relay $VER" \
+            --notes "$NOTES"
