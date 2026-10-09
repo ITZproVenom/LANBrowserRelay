@@ -3,7 +3,7 @@
 /local.properties
 /.idea
 .DS_Store
-/build
+build/
 /captures
 .externalNativeBuild
 .cxx
@@ -15,16 +15,7 @@
 bin/
 gen/
 out/
-.idea/
 *.hprof
-.cxx/
-local.properties
-*.keystore
-*.jks
-secrets.properties
 .kotlin/
-app/release/
-app/debug/
 *.log
-.DS_Store
 Thumbs.db

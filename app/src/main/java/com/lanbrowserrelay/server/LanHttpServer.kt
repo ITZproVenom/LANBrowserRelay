@@ -1,263 +1,142 @@
 package com.lanbrowserrelay.server
-
 import android.content.Context
 import android.util.Log
-import com.lanbrowserrelay.Config
+import com.lanbrowserrelay.DownloadPolicy
+import com.lanbrowserrelay.download.BoundedRelayInputStream
 import com.lanbrowserrelay.download.DownloadManager
 import com.lanbrowserrelay.gateway.HtmlGateway
 import com.lanbrowserrelay.security.UrlValidator
 import fi.iki.elonen.NanoHTTPD
+import okhttp3.Call
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response as Upstream
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.io.InputStream
+import java.net.InetAddress
+import java.net.URI
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-
-/** Open LAN HTTP server — no authentication. */
-class LanHttpServer(
-    private val context: Context,
-    port: Int,
-    private val downloadManager: DownloadManager,
-    private val logSink: (String) -> Unit = {},
-    private val onStatusUpdate: (() -> Unit)? = null
-) : NanoHTTPD(port) {
-
-    private val gateway = HtmlGateway()
-    private val clientCount = AtomicInteger(0)
-    private val logs = CopyOnWriteArrayList<String>()
-    private val tag = "LanHttpServer"
-    private val maxLogLines = 200
-
-    fun connectedClients(): Int = clientCount.get()
-    fun recentLogs(): List<String> = logs.takeLast(50)
-
-    private fun log(msg: String) {
-        val line = "${System.currentTimeMillis() % 100000}: $msg"
-        logs.add(line)
-        while (logs.size > maxLogLines) logs.removeAt(0)
-        logSink(line)
-        Log.d(tag, msg)
-    }
-
-    override fun serve(session: IHTTPSession): Response {
-        clientCount.incrementAndGet()
-        try {
-            val uri = session.uri
-            val method = session.method
-            log("$method $uri")
-
-            val cors = mapOf(
-                "Access-Control-Allow-Origin" to "*",
-                "Access-Control-Allow-Methods" to "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers" to "Content-Type"
-            )
-
-            if (method == Method.OPTIONS) {
-                return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "").apply {
-                    cors.forEach { (k, v) -> addHeader(k, v) }
-                }
-            }
-
-            val response = when {
-                uri == "/" || uri == "/index.html" -> serveAsset("web/index.html", "text/html")
-                uri.startsWith("/css/") -> serveAsset("web$uri", "text/css")
-                uri.startsWith("/js/") -> serveAsset("web$uri", "application/javascript")
-                uri == "/api/status" -> jsonResponse(statusJson())
-                uri == "/api/logs" -> jsonResponse(logsJson())
-                uri == "/api/download" && method == Method.GET -> handleDownload(session)
-                uri == "/browse" -> handleBrowse(session)
-                uri == "/api/search" -> handleSearch(session)
-                else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found")
-            }
-            cors.forEach { (k, v) -> response.addHeader(k, v) }
-            return response
-        } finally {
-            clientCount.decrementAndGet()
-            onStatusUpdate?.invoke()
-        }
-    }
-
-    private fun handleBrowse(session: IHTTPSession): Response {
-        val url = session.parms["url"]
-            ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
-        log("Browse: $url")
-        val result = gateway.fetchAndRewrite(url, "")
-        return newFixedLengthResponse(
-            Response.Status.lookup(result.statusCode) ?: Response.Status.OK,
-            result.contentType,
-            ByteArrayInputStream(result.body),
-            result.body.size.toLong()
-        )
-    }
-
-    private fun handleSearch(session: IHTTPSession): Response {
-        val q = session.parms["q"]
-            ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing q")
-        val googleUrl = "https://www.google.com/search?q=${java.net.URLEncoder.encode(q, "UTF-8")}&hl=en"
-        val browseUrl = "/browse?url=${java.net.URLEncoder.encode(googleUrl, "UTF-8")}"
-        val response = newFixedLengthResponse(Response.Status.REDIRECT, MIME_HTML, "")
-        response.addHeader("Location", browseUrl)
-        return response
-    }
-
-    private fun handleDownload(session: IHTTPSession): Response {
-        val url = session.parms["url"]
-            ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing url")
-
-        val validation = UrlValidator.isAllowedUrl(url)
-        if (validation.isFailure) {
-            log("Download blocked: ${validation.exceptionOrNull()?.message}")
-            return jsonResponse(
-                JSONObject().put("error", validation.exceptionOrNull()?.message).toString(),
-                Response.Status.FORBIDDEN
-            )
-        }
-
-        val id = UUID.randomUUID().toString()
-        val filenameHint = session.parms["filename"]
-        log("Download start: $url")
-        return createStreamingDownloadResponse(id, url, filenameHint)
-    }
-
-    private fun createStreamingDownloadResponse(id: String, url: String, filenameHint: String?): Response {
-        val maxBytes = Config.getMaxDownloadBytes(context)
-        return try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .followRedirects(true)
-                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            val request = okhttp3.Request.Builder().url(url).build()
-            val call = client.newCall(request)
-            val upstream = call.execute()
-
-            if (!upstream.isSuccessful) {
-                upstream.close()
-                log("Upstream error ${upstream.code}")
-                return newFixedLengthResponse(
-                    Response.Status.lookup(upstream.code) ?: Response.Status.INTERNAL_ERROR,
-                    MIME_PLAINTEXT,
-                    "Upstream error: ${upstream.code}"
-                )
-            }
-
-            val finalUrl = upstream.request.url.toString()
-            if (UrlValidator.isAllowedUrl(finalUrl).isFailure) {
-                upstream.close()
-                return newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "Redirect blocked")
-            }
-
-            val body = upstream.body!!
-            val contentLength = body.contentLength()
-            if (contentLength > 0 && contentLength > maxBytes) {
-                upstream.close()
-                log("Rejected oversized Content-Length: $contentLength")
-                return newFixedLengthResponse(
-                    Response.Status.PAYLOAD_TOO_LARGE,
-                    "application/json",
-                    JSONObject().put("error", "File exceeds limit of ${maxBytes / 1_000_000} MB").toString()
-                )
-            }
-
-            val filename = filenameHint?.takeIf { it.isNotBlank() }
-                ?: UrlValidator.extractFilename(upstream.header("Content-Disposition"), finalUrl)
-            val contentType = upstream.header("Content-Type") ?: "application/octet-stream"
-
-            val limitedStream = object : InputStream() {
-                private val upstreamStream = body.byteStream()
-                private var transferred = 0L
-                private var closed = false
-                private var lastLog = 0L
-
-                override fun read(): Int {
-                    val b = ByteArray(1)
-                    val n = read(b, 0, 1)
-                    return if (n == -1) -1 else b[0].toInt() and 0xFF
-                }
-
-                override fun read(b: ByteArray, off: Int, len: Int): Int {
-                    if (closed) return -1
-                    if (transferred >= maxBytes) {
-                        call.cancel()
-                        closed = true
-                        log("Limit hit at $transferred bytes")
-                        return -1
-                    }
-                    val toRead = minOf(len.toLong(), maxBytes - transferred).toInt()
-                    val n = upstreamStream.read(b, off, toRead)
-                    if (n > 0) {
-                        transferred += n
-                        val now = System.currentTimeMillis()
-                        if (now - lastLog > 1000) {
-                            log("Streaming ${transferred / 1000} KB")
-                            lastLog = now
-                        }
-                    }
-                    if (n == -1) {
-                        closed = true
-                        log("Download complete: $transferred bytes -> $filename")
-                    }
-                    return n
-                }
-
-                override fun close() {
-                    closed = true
-                    try { upstreamStream.close() } catch (_: Exception) {}
-                    try { upstream.close() } catch (_: Exception) {}
-                }
-            }
-
-            val response = newChunkedResponse(Response.Status.OK, contentType, limitedStream)
-            val safeName = UrlValidator.safeFilename(filename)
-            response.addHeader(
-                "Content-Disposition",
-                "attachment; filename=\"$safeName\"; filename*=UTF-8''${java.net.URLEncoder.encode(safeName, "UTF-8").replace("+", "%20")}"
-            )
-            response.addHeader("X-Download-Id", id)
-            response.addHeader("Cache-Control", "no-store")
-            response
-        } catch (e: Exception) {
-            log("Download failed: ${e.message}")
-            newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Download failed: ${e.message}")
-        }
-    }
-
-    private fun statusJson(): String {
-        val downloads = downloadManager.getActiveDownloads()
-        return JSONObject()
-            .put("running", true)
-            .put("clients", clientCount.get())
-            .put("downloads", downloads.size)
-            .put("maxDownloadBytes", Config.getMaxDownloadBytes(context))
-            .put("totalBytesServed", downloadManager.getTotalBytesServed())
-            .put("active", JSONArray().apply {
-                downloads.take(5).forEach { d ->
-                    put(JSONObject()
-                        .put("filename", d.filename)
-                        .put("bytes", d.bytesTransferred)
-                        .put("status", d.status.name)
-                        .put("speed", d.speedBps))
-                }
-            })
-            .toString()
-    }
-
-    private fun logsJson(): String {
-        return JSONObject().put("logs", JSONArray(recentLogs())).toString()
-    }
-
-    private fun serveAsset(path: String, mime: String): Response {
-        return try {
-            val stream = context.assets.open(path)
-            newChunkedResponse(Response.Status.OK, mime, stream)
-        } catch (e: Exception) {
-            newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Asset not found: $path")
-        }
-    }
-
-    private fun jsonResponse(json: String, status: Response.Status = Response.Status.OK): Response {
-        return newFixedLengthResponse(status, "application/json", json)
-    }
+class LanHttpServer(private val context:Context,port:Int,private val downloads:DownloadManager,private val logSink:(String)->Unit):NanoHTTPD(port){
+ private val gateway=HtmlGateway();private val logs=CopyOnWriteArrayList<String>();private val calls=ConcurrentHashMap<String,Call>();private val clients=AtomicInteger()
+ private fun log(s:String){val line="${System.currentTimeMillis()%100000}: $s";logs.add(line);while(logs.size>100)logs.removeAt(0);logSink(line);Log.d("LanBrowserRelay",s)}
+ fun recentLogs():List<String> = logs.takeLast(40)
+ fun connectedClients()=clients.get()
+ override fun serve(session:IHTTPSession):Response{
+  clients.incrementAndGet()
+  try{
+   log("${session.method} ${session.uri}")
+   return when(session.uri){
+    "/", "/index.html"->asset("web/index.html","text/html; charset=utf-8")
+    "/styles.css"->asset("web/styles.css","text/css; charset=utf-8")
+    "/app.js"->asset("web/app.js","application/javascript; charset=utf-8")
+    "/api/status"->json(status())
+    "/api/logs"->json(JSONObject().put("logs",JSONArray(recentLogs())).toString())
+    "/api/cancel"->cancel(session.parms["id"])
+    "/browse"->browse(session.parms["url"])
+    "/api/download"->download(session)
+    else->newFixedLengthResponse(Response.Status.NOT_FOUND,MIME_PLAINTEXT,"Not found")
+   }.apply{addHeader("Cache-Control","no-store");addHeader("X-Content-Type-Options","nosniff")}
+  }finally{clients.decrementAndGet()}
+ }
+ private fun browse(url:String?):Response{
+  if(url.isNullOrBlank())return newFixedLengthResponse(Response.Status.BAD_REQUEST,MIME_PLAINTEXT,"Missing URL")
+  val p=gateway.fetch(url)
+  return newFixedLengthResponse(Response.Status.lookup(p.status)?:Response.Status.OK,p.type,ByteArrayInputStream(p.bytes),p.bytes.size.toLong())
+ }
+ private fun download(session:IHTTPSession):Response{
+  val raw=session.parms["url"]?:return newFixedLengthResponse(Response.Status.BAD_REQUEST,MIME_PLAINTEXT,"Missing URL")
+  val safe=UrlValidator.validate(raw)
+  if(safe.isFailure)return json(JSONObject().put("error",safe.exceptionOrNull()?.message).toString(),Response.Status.FORBIDDEN)
+  val supplied=session.parms["id"];val id=supplied?.takeIf{it.matches(Regex("[A-Za-z0-9_-]{1,80}"))}?:UUID.randomUUID().toString()
+  val name=session.parms["filename"]?.let{UrlValidator.safeFilename(it)}
+  return stream(id,safe.getOrThrow().toString(),name)
+ }
+ private fun cancel(id:String?):Response{
+  if(id.isNullOrBlank())return json(JSONObject().put("error","Missing id").toString(),Response.Status.BAD_REQUEST)
+  val c=calls[id]?:return json(JSONObject().put("ok",false).put("error","No active transfer").toString(),Response.Status.NOT_FOUND)
+  downloads.cancel(id);c.cancel();log("Cancel requested: $id");return json(JSONObject().put("ok",true).toString())
+ }
+ private fun stream(id:String,start:String,hint:String?):Response{
+  if(!downloads.begin(id,start))return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE,MIME_PLAINTEXT,"Concurrent limit reached or duplicate id")
+  var selectedCall:Call?=null;var upstream:Upstream?=null
+  try{
+   val client=OkHttpClient.Builder().dns(object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> =
+     UrlValidator.resolvePublicAddresses(hostname)
+   }).followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).build()
+   var url=start;var selected:Upstream?=null;var callSelected:Call?=null
+   for(i in 0..5){
+    val valid=UrlValidator.validate(url).getOrElse{throw IOException("Redirect blocked: ${it.message}")}
+    val c=client.newCall(Request.Builder().url(valid).header("User-Agent","LANBrowserRelay/1.0").build());calls[id]=c;selectedCall=c
+    val r=c.execute()
+    if(r.code in 300..399&&!r.header("Location").isNullOrBlank()){
+     if(i==5){r.close();throw IOException("Too many redirects")}
+     val next=URI(url).resolve(r.header("Location")!!).toString();r.close();calls.remove(id,c)
+     url=UrlValidator.validate(next).getOrElse{throw IOException("Redirect blocked: ${it.message}")}.toString()
+    }else{selected=r;callSelected=c;break}
+   }
+   val r=selected?:throw IOException("No upstream response");val call=callSelected?:throw IOException("No upstream request")
+   upstream=r;selectedCall=call
+   if(!r.isSuccessful){r.close();calls.remove(id,call);downloads.finish(id,"FAILED",0,"HTTP ${r.code}");return newFixedLengthResponse(Response.Status.lookup(r.code)?:Response.Status.INTERNAL_ERROR,MIME_PLAINTEXT,"Upstream error: ${r.code}")}
+   val body=r.body?:throw IOException("Empty upstream body");val length=body.contentLength().takeIf{it>=0}
+   if(length!=null&&length>DownloadPolicy.MAX_BYTES){r.close();calls.remove(id,call);downloads.finish(id,"LIMIT_EXCEEDED",0,"File exceeds 100 MB limit");return json(JSONObject().put("error","File exceeds 100 MB limit").toString(),Response.Status.PAYLOAD_TOO_LARGE)}
+   val filename=UrlValidator.safeFilename(hint?:UrlValidator.filenameFrom(r.header("Content-Disposition"),r.request.url.toString()))
+   val type=r.header("Content-Type")?:"application/octet-stream";val input=body.byteStream()
+   var transferred=0L;var until=System.currentTimeMillis();var previous=0L;var speed=0L
+   fun cleanup(){try{input.close()}catch(_:Exception){};try{r.close()}catch(_:Exception){};calls.remove(id,call)}
+   val transfer=BoundedRelayInputStream(
+    input=input,
+    limitBytes=DownloadPolicy.MAX_BYTES,
+    expectedLength=length,
+    onBytes={n->
+     transferred=n;val now=System.currentTimeMillis()
+     if(now-until>=500){speed=((transferred-previous)*1000L)/(now-until).coerceAtLeast(1);until=now;previous=transferred}
+     downloads.progress(id,filename,length,transferred,speed)
+    },
+    onComplete={n,truncated->
+     transferred=n
+     downloads.finish(id,if(truncated)"FAILED" else "COMPLETED",n,if(truncated)"Upstream ended early" else null)
+calls.remove(id,call);cleanup()
+       val outcome=if(truncated)"failed (truncated)" else "complete"
+       log("Download $outcome: $filename ($n bytes)")
+    },
+    onLimitExceeded={n->
+     transferred=n
+     downloads.finish(id,"LIMIT_EXCEEDED",n,"File exceeds 100 MB limit")
+     calls.remove(id,call);call.cancel();cleanup()
+     log("Limit exceeded: $filename ($n bytes)")
+    },
+    onDisconnected={n->
+     transferred=n
+     downloads.finish(id,if(call.isCanceled())"CANCELLED" else "FAILED",n,if(call.isCanceled())"Cancelled by user" else "Client disconnected")
+     calls.remove(id,call);call.cancel();cleanup()
+     log("Transfer cancelled or disconnected: $filename ($n bytes)")
+    },
+    onError={n,message->
+     transferred=n
+     downloads.finish(id,if(call.isCanceled())"CANCELLED" else "FAILED",n,message)
+     calls.remove(id,call);call.cancel();cleanup()
+    },
+    abort={call.cancel()}
+   )
+   val output=if(length!=null&&length<DownloadPolicy.MAX_BYTES)newFixedLengthResponse(Response.Status.OK,type,transfer,length)else newChunkedResponse(Response.Status.OK,type,transfer)
+   val enc=java.net.URLEncoder.encode(filename,"UTF-8").replace("+","%20")
+   output.addHeader("Content-Disposition","attachment; filename=\"$filename\"; filename*=UTF-8''$enc");output.addHeader("X-Download-Id",id);return output
+  }catch(e:Exception){
+   calls.remove(id);try{upstream?.close()}catch(_:Exception){}
+   downloads.finish(id,if(selectedCall?.isCanceled() == true) "CANCELLED" else "FAILED",0,e.message ?: "Download failed")
+   log("Download failed: ${e.message}");return newFixedLengthResponse(Response.Status.INTERNAL_ERROR,MIME_PLAINTEXT,e.message?: "Download failed")
+  }
+ }
+ private fun status():String=JSONObject().put("running",true).put("clients",clients.get()).put("activeCount",downloads.activeCount()).put("maxDownloadBytes",DownloadPolicy.MAX_BYTES).put("totalBytesServed",downloads.totalBytesServed()).put("downloads",JSONArray().apply{downloads.recent().forEach{d->put(JSONObject().put("id",d.id).put("url",d.url).put("filename",d.filename).put("bytes",d.bytes).put("total",d.total?:JSONObject.NULL).put("speed",d.speed).put("status",d.status).put("error",d.error?:JSONObject.NULL))}}).toString()
+ private fun asset(path:String,type:String):Response=try{context.assets.open(path).use{val b=it.readBytes();newFixedLengthResponse(Response.Status.OK,type,ByteArrayInputStream(b),b.size.toLong())}}catch(_:Exception){newFixedLengthResponse(Response.Status.NOT_FOUND,MIME_PLAINTEXT,"Asset not found")}
+ private fun json(s:String,status:Response.Status=Response.Status.OK)=newFixedLengthResponse(status,"application/json; charset=utf-8",s)
 }
