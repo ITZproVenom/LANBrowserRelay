@@ -23,39 +23,53 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
+      # GitHub's ubuntu runner image already includes the Android SDK.
+      # Do not use android-actions/setup-android@v3 here: it requests the
+      # obsolete SDK package named "tools", which now makes sdkmanager fail.
+      - name: Install required Android SDK packages
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -n 1)"
+          fi
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under ANDROID_HOME=$ANDROID_HOME"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Bootstrap Gradle wrapper if missing
+      - name: Ensure Gradle wrapper exists
+        shell: bash
         run: |
           if [ ! -f gradlew ]; then
             gradle wrapper --gradle-version 8.2
           fi
           chmod +x gradlew
+          test -s gradle/wrapper/gradle-wrapper.properties
 
       - name: Assemble debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew --no-daemon assembleDebug --stacktrace
 
       - name: Run unit tests
-        run: ./gradlew test --stacktrace
+        run: ./gradlew --no-daemon test --stacktrace
 
       - name: Run Android lint
-        run: ./gradlew lintDebug --stacktrace || true
+        run: ./gradlew --no-daemon lintDebug --stacktrace
 
       - name: Verify APK
+        shell: bash
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK" || { echo "Expected APK missing or empty: $APK"; exit 1; }
           echo "APK found: $APK ($(stat -c%s "$APK") bytes)"
           file "$APK"
+          unzip -t "$APK" >/dev/null
+          echo "APK zip integrity verified."
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
