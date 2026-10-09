@@ -8,24 +8,14 @@ import android.os.Build
 class LanBrowserApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-    }
-
-    private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "LAN Server Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Notification for the LAN Browser Relay service"
-            }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "LAN Browser Relay", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Keeps the local browser relay running"
+                }
+            )
         }
     }
 
-    companion object {
-        const val CHANNEL_ID = "lan_server_channel"
-    }
+    companion object { const val CHANNEL_ID = "lan_browser_relay_service" }
 }

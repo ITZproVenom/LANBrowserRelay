@@ -1,47 +1,14 @@
 # LAN Browser Relay
 
-Android TV hosts a local web server. Open its LAN address on your phone (Safari/Chrome). Browse and download through the TV’s Ethernet connection. Downloads are streamed with a 100 MB limit and never stored on the TV.
+An Android TV hosts a no-login browser gateway on the home LAN. Open the TV's LAN URL in Safari or Chrome on a phone connected to the same network.
 
-**No login / no pairing.** Open the app → service starts automatically → open the shown URL on your phone.
+## Use it
+1. Install the debug APK on Android TV and open it.
+2. Wait for the LAN URL to appear.
+3. Open that URL on your phone.
 
-## TV app
+Downloads are streamed through bounded RAM buffers, never staged in files on the TV. Each download is limited to 100,000,000 bytes (100 MB decimal), including chunked responses whose size is unknown at the start. The gateway blocks local and reserved destination addresses, and validates redirect destinations.
 
-- Starts the LAN server automatically
-- Clears caches on every startup
-- Shows only: LAN address, logs, download speed, and a small read-only browser preview
-- All real browsing and downloads happen in the phone’s browser
+No login, pairing, account, or companion app is required. Keep this open service on a trusted LAN and do not expose the port to the public internet.
 
-## Phone
-
-1. Open the URL shown on the TV (e.g. `http://192.168.1.50:8080`)
-2. Search Google or enter any URL
-3. Downloads stream through the TV and appear as normal browser downloads
-
-## Build
-
-```bash
-./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
-```
-
-Requires JDK 17 + Android SDK (compileSdk 34).
-
-## Install on Android TV
-
-```bash
-adb connect <tv-ip>
-adb install -r app-debug.apk
-```
-
-Open the app — it starts serving immediately.
-
-## Limits
-
-- Default max download size: 100 MB (decimal)
-- Streaming only (no permanent file storage on TV)
-- Basic SSRF protection (private/loopback destinations blocked for upstream fetches)
-- Not every website works through the gateway (CSP, complex apps, DRM, etc.)
-
-## License
-
-MIT
+The hosted gateway supports ordinary websites, but sites that depend on advanced browser APIs, service workers, third-party cookie policies, or complex cross-origin behavior may not work fully in a proxied page.

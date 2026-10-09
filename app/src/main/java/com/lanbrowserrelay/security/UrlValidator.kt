@@ -1,103 +1,64 @@
 package com.lanbrowserrelay.security
 
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.URI
 import java.net.URL
 
-/**
- * Validates destinations for SSRF protection.
- * Blocks private, loopback, link-local, multicast, and reserved ranges.
- */
 object UrlValidator {
-
-    private val BLOCKED_HOSTS = setOf(
-        "localhost", "127.0.0.1", "0.0.0.0", "::1",
-        "metadata.google.internal", "169.254.169.254"
-    )
-
-    fun isAllowedUrl(urlString: String): Result<URL> {
-        return try {
-            val url = URL(urlString)
-            val protocol = url.protocol.lowercase()
-            if (protocol != "http" && protocol != "https") {
-                return Result.failure(SecurityException("Only http/https schemes allowed"))
-            }
-            val host = url.host?.lowercase() ?: return Result.failure(SecurityException("Missing host"))
-            if (host in BLOCKED_HOSTS) {
-                return Result.failure(SecurityException("Blocked host: $host"))
-            }
-            val addresses = InetAddress.getAllByName(host)
-            for (addr in addresses) {
-                if (isProhibitedAddress(addr)) {
-                    return Result.failure(SecurityException("Prohibited address for host $host: ${addr.hostAddress}"))
-                }
-            }
-            Result.success(url)
-        } catch (e: Exception) {
-            Result.failure(SecurityException("Invalid URL: ${e.message}"))
+    fun validate(raw: String): Result<URL> = runCatching {
+        val uri = URI(raw.trim())
+        require(uri.scheme.equals("http", true) || uri.scheme.equals("https", true)) {
+            "Only HTTP and HTTPS URLs are supported"
         }
+        require(uri.rawUserInfo == null) { "URLs containing user credentials are not allowed" }
+        val host = uri.host?.trim('[', ']')?.lowercase()
+        require(!host.isNullOrBlank()) { "URL has no valid hostname" }
+        val addresses = InetAddress.getAllByName(host)
+        require(addresses.isNotEmpty() && addresses.none(::isBlockedAddress)) {
+            "Local or reserved destinations are blocked"
+        }
+        uri.toURL()
     }
 
-    fun isProhibitedAddress(addr: InetAddress): Boolean {
-        return addr.isAnyLocalAddress ||
-                addr.isLoopbackAddress ||
-                addr.isLinkLocalAddress ||
-                addr.isMulticastAddress ||
-                addr.isSiteLocalAddress ||
-                isCarrierGradeNat(addr) ||
-                isReserved(addr)
-    }
-
-    private fun isCarrierGradeNat(addr: InetAddress): Boolean {
-        val bytes = addr.address
-        if (bytes.size == 4) {
-            val b0 = bytes[0].toInt() and 0xFF
-            val b1 = bytes[1].toInt() and 0xFF
-            return b0 == 100 && (b1 and 0xC0) == 64
+    fun isBlockedAddress(address: InetAddress): Boolean {
+        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress) return true
+        val b = address.address.map { it.toInt() and 255 }
+        if (address is Inet4Address) {
+            val a0 = b[0]
+            val a1 = b[1]
+            if (a0 == 0 || a0 == 10 || a0 == 127 || a0 >= 224) return true
+            if (a0 == 100 && a1 in 64..127) return true
+            if (a0 == 169 && a1 == 254) return true
+            if (a0 == 172 && a1 in 16..31) return true
+            if (a0 == 192 && (a1 == 0 || a1 == 168)) return true
+            if (a0 == 198 && a1 in 18..19) return true
+            if (a0 == 198 && a1 == 51 && b[2] == 100) return true
+            if (a0 == 203 && a1 == 0 && b[2] == 113) return true
         }
+        if (address is Inet6Address && (b[0] and 0xfe) == 0xfc) return true
         return false
     }
 
-    private fun isReserved(addr: InetAddress): Boolean {
-        val bytes = addr.address
-        if (bytes.size == 4) {
-            val b0 = bytes[0].toInt() and 0xFF
-            if (b0 == 0) return true
-            if (b0 >= 240) return true
-        }
-        return false
-    }
-
-    fun safeFilename(name: String?): String {
-        if (name.isNullOrBlank()) return "download.bin"
-        var cleaned = name
-            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    fun safeFilename(input: String?): String {
+        val value = input.orEmpty()
+            .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
             .replace(Regex("\\s+"), " ")
-            .trim()
-        if (cleaned.length > 200) cleaned = cleaned.take(200)
-        if (cleaned.isBlank()) return "download.bin"
-        return cleaned
+            .trim().trim('.').take(180)
+        return value.ifBlank { "download.bin" }
     }
 
-    fun extractFilename(contentDisposition: String?, url: String): String {
-        contentDisposition?.let { cd ->
-            val filenameStar = Regex("filename\\*=(?:UTF-8'')?([^;]+)", RegexOption.IGNORE_CASE)
-                .find(cd)?.groupValues?.getOrNull(1)
-            if (!filenameStar.isNullOrBlank()) {
-                return safeFilename(java.net.URLDecoder.decode(filenameStar.trim().trim('"'), "UTF-8"))
-            }
-            val filename = Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE)
-                .find(cd)?.groupValues?.getOrNull(1)
-            if (!filename.isNullOrBlank()) {
-                return safeFilename(filename.trim())
-            }
+    fun filenameFrom(disposition: String?, url: String): String {
+        if (!disposition.isNullOrBlank()) {
+            Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE)
+                .find(disposition)?.groupValues?.getOrNull(1)?.let {
+                    return safeFilename(runCatching { java.net.URLDecoder.decode(it.trim(), "UTF-8") }.getOrDefault(it))
+                }
+            Regex("filename=\"?([^\";]+)", RegexOption.IGNORE_CASE)
+                .find(disposition)?.groupValues?.getOrNull(1)?.let { return safeFilename(it) }
         }
-        return try {
-            val path = URI(url).path
-            val last = path.substringAfterLast('/').takeIf { it.isNotBlank() }
-            safeFilename(last ?: "download.bin")
-        } catch (_: Exception) {
-            "download.bin"
-        }
+        return safeFilename(runCatching { URI(url).path.substringAfterLast('/').takeIf { it.isNotBlank() } }.getOrNull())
     }
 }

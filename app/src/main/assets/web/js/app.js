@@ -1,69 +1,139 @@
-(function () {
-  let historyStack = [];
-  let historyIndex = -1;
-  let currentUrl = null;
-  const $ = (id) => document.getElementById(id);
-  const urlInput = $('urlInput');
-  const viewer = $('viewer');
-  const homePanel = $('homePanel');
-  const loadingOverlay = $('loadingOverlay');
-  const connIndicator = $('connIndicator');
-  const pageTitle = $('pageTitle');
-  const pageUrl = $('pageUrl');
-  const limitDisplay = $('limitDisplay');
-  const dlPanel = $('dlPanel');
-  const dlList = $('dlList');
-  function show(el) { el.classList.remove('hidden'); }
-  function hide(el) { el.classList.add('hidden'); }
-  async function checkStatus() {
+(() => {
+  const $ = id => document.getElementById(id);
+  const state = { history: [], index: -1, current: "", downloads: new Map(), toastTimer: null };
+  const viewer = $("viewer");
+  const address = $("addressInput");
+  function toast(message) {
+    const el = $("toast");
+    el.textContent = message;
+    el.classList.add("visible");
+    clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => el.classList.remove("visible"), 2600);
+  }
+  function loading(value) {
+    $("loadProgress").classList.toggle("active", value);
+    $("pageState").textContent = value ? "Loading" : "Ready";
+  }
+  function home() {
+    $("homeView").classList.remove("hidden");
+    $("browserView").classList.add("hidden");
+    address.value = "";
+    state.current = "";
+    loading(false);
+  }
+  function normalize(raw) {
+    const value = String(raw || "").trim();
+    if (!value) return "";
+    if (/^https?:\/\//i.test(value)) return value;
+    if (/^[^\s.]+\.[^\s.]+/.test(value) && !value.includes(" ")) return "https://" + value;
+    return "https://www.google.com/search?q=" + encodeURIComponent(value) + "&hl=en";
+  }
+  function navigate(raw, add = true) {
+    const url = normalize(raw || address.value);
+    if (!url) return;
+    state.current = url;
+    address.value = url;
+    $("pageUrl").textContent = url;
+    $("homeView").classList.add("hidden");
+    $("browserView").classList.remove("hidden");
+    loading(true);
+    viewer.src = "/browse?url=" + encodeURIComponent(url);
+    if (add) {
+      state.history = state.history.slice(0, state.index + 1);
+      state.history.push(url);
+      state.index = state.history.length - 1;
+    }
+  }
+  function download(url, filename) {
+    if (!url) return;
+    const id = "dl" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const params = new URLSearchParams({ url: url, id: id });
+    if (filename) params.set("filename", filename);
+    const a = document.createElement("a");
+    a.href = "/api/download?" + params.toString();
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    state.downloads.set(id, { id, url, filename: filename || "Preparing download", bytes: 0, length: null, speed: 0, status: "STARTING" });
+    renderDownloads();
+    $("downloadsPanel").classList.remove("hidden");
+    toast("Download requested");
+  }
+  function fmt(n) {
+    if (!Number.isFinite(n) || n < 0) return "0 B";
+    if (n < 1000) return n + " B";
+    if (n < 1000000) return (n / 1000).toFixed(1) + " KB";
+    return (n / 1000000).toFixed(2) + " MB";
+  }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function renderDownloads() {
+    const list = $("downloadList");
+    const all = Array.from(state.downloads.values()).sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    $("activeCount").textContent = all.filter(x => x.status === "STARTING" || x.status === "STREAMING").length;
+    if (!all.length) {
+      list.innerHTML = '<p class="empty">Your downloads will appear here.</p>';
+      return;
+    }
+    list.innerHTML = all.map(t => {
+      const active = t.status === "STARTING" || t.status === "STREAMING";
+      const pct = t.length > 0 ? Math.min(100, 100 * t.bytes / t.length) : (t.status === "COMPLETED" ? 100 : 0);
+      return '<article class="transfer"><div class="transfer-top"><div><div class="transfer-name">' + esc(t.filename || "download") +
+        '</div><div class="transfer-status">' + esc(t.status) + ' · ' + fmt(t.bytes) +
+        (t.length != null ? ' / ' + fmt(t.length) : '') + ' · ' + fmt(t.speed || 0) + '/s</div></div>' +
+        '<div class="transfer-actions">' + (active ? '<button data-cancel="' + esc(t.id) + '">Cancel</button>' : '') +
+        ((t.status === "FAILED" || t.status === "LIMIT_EXCEEDED" || t.status === "CANCELLED") ? '<button data-dismiss="' + esc(t.id) + '">×</button>' : '') +
+        '</div></div><div class="progress-track"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+        (t.error ? '<div class="transfer-error">' + esc(t.error) + '</div>' : '') + '</article>';
+    }).join("");
+  }
+  async function status() {
     try {
-      const res = await fetch('/api/status');
-      if (res.ok) {
-        const data = await res.json();
-        connIndicator.className = 'dot ok';
-        if (data.maxDownloadBytes) limitDisplay.textContent = Math.round(data.maxDownloadBytes / 1e6) + ' MB';
-        return true;
-      }
+      const res = await fetch("/api/status", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      (data.downloads || []).forEach(t => state.downloads.set(t.id, {
+        id: t.id, url: t.url, filename: t.filename, bytes: t.bytes, length: t.length === null ? null : t.length,
+        speed: t.speed || 0, status: t.status, error: t.error, updatedAt: Date.now()
+      }));
+      renderDownloads();
     } catch (_) {}
-    connIndicator.className = 'dot err';
-    return false;
   }
-  function showHome() {
-    hide(viewer); show(homePanel);
-    pageTitle.textContent = 'Home'; pageUrl.textContent = ''; urlInput.value = ''; currentUrl = null;
-  }
-  function showLoading(on) { if (on) show(loadingOverlay); else hide(loadingOverlay); }
-  function navigate(raw) {
-    let input = (raw || urlInput.value || '').trim();
-    if (!input) return;
-    let target;
-    if (/^https?:\/\//i.test(input)) target = input;
-    else if (input.includes('.') && !input.includes(' ')) target = 'https://' + input;
-    else target = 'https://www.google.com/search?q=' + encodeURIComponent(input) + '&hl=en';
-    loadUrl(target);
-  }
-  function loadUrl(url, pushHistory = true) {
-    showLoading(true); hide(homePanel); show(viewer);
-    viewer.src = '/browse?url=' + encodeURIComponent(url);
-    currentUrl = url; urlInput.value = url; pageUrl.textContent = url; pageTitle.textContent = 'Loading…';
-    if (pushHistory) { historyStack = historyStack.slice(0, historyIndex + 1); historyStack.push(url); historyIndex = historyStack.length - 1; }
-  }
-  viewer.addEventListener('load', () => { showLoading(false); pageTitle.textContent = 'Page loaded'; });
-  $('navForm').addEventListener('submit', (e) => { e.preventDefault(); navigate(); });
-  $('homeSearch').addEventListener('submit', (e) => { e.preventDefault(); const q = $('homeQuery').value.trim(); if (q) navigate(q); });
-  $('backBtn').addEventListener('click', () => { if (historyIndex > 0) { historyIndex--; loadUrl(historyStack[historyIndex], false); } else showHome(); });
-  $('fwdBtn').addEventListener('click', () => { if (historyIndex < historyStack.length - 1) { historyIndex++; loadUrl(historyStack[historyIndex], false); } });
-  $('reloadBtn').addEventListener('click', () => { if (currentUrl) loadUrl(currentUrl, false); });
-  $('homeBtn').addEventListener('click', showHome);
-  window.startDownload = function (url, filename) {
-    const a = document.createElement('a');
-    a.href = '/api/download?url=' + encodeURIComponent(url) + (filename ? '&filename=' + encodeURIComponent(filename) : '');
-    a.download = filename || ''; a.style.display = 'none'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    const item = document.createElement('div'); item.className = 'dl-item';
-    item.innerHTML = '<div class="name">' + (filename || url.split('/').pop() || 'download') + '</div><div class="meta">Started – streaming via TV</div>';
-    dlList.prepend(item); show(dlPanel);
-  };
-  $('dlPanelBtn').addEventListener('click', () => dlPanel.classList.toggle('hidden'));
-  $('closeDlPanel').addEventListener('click', () => hide(dlPanel));
-  checkStatus(); setInterval(checkStatus, 8000); showHome();
+  $("addressForm").addEventListener("submit", e => { e.preventDefault(); navigate(); });
+  $("homeSearch").addEventListener("submit", e => { e.preventDefault(); navigate($("homeQuery").value); });
+  $("backBtn").addEventListener("click", () => {
+    if (state.index > 0) { state.index--; navigate(state.history[state.index], false); }
+    else home();
+  });
+  $("forwardBtn").addEventListener("click", () => {
+    if (state.index < state.history.length - 1) { state.index++; navigate(state.history[state.index], false); }
+  });
+  $("reloadBtn").addEventListener("click", () => { if (state.current) navigate(state.current, false); });
+  $("homeBtn").addEventListener("click", home);
+  $("downloadCurrentBtn").addEventListener("click", () => download(state.current, ""));
+  $("downloadsToggle").addEventListener("click", () => $("downloadsPanel").classList.toggle("hidden"));
+  $("closeDownloads").addEventListener("click", () => $("downloadsPanel").classList.add("hidden"));
+  $("downloadList").addEventListener("click", async e => {
+    const cancel = e.target.closest("[data-cancel]");
+    const dismiss = e.target.closest("[data-dismiss]");
+    if (cancel) {
+      const id = cancel.getAttribute("data-cancel");
+      try { await fetch("/api/cancel?id=" + encodeURIComponent(id), { cache: "no-store" }); } catch (_) {}
+      toast("Cancellation requested");
+    }
+    if (dismiss) state.downloads.delete(dismiss.getAttribute("data-dismiss"));
+    renderDownloads();
+  });
+  window.addEventListener("message", e => {
+    if (e.source !== viewer.contentWindow || !e.data || e.data.type !== "lanrelay-download") return;
+    download(e.data.url, e.data.filename || "");
+  });
+  viewer.addEventListener("load", () => loading(false));
+  viewer.addEventListener("error", () => { loading(false); toast("Page failed to load"); });
+  setInterval(status, 800);
+  status();
+  home();
 })();
