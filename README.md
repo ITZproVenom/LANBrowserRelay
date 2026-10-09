@@ -21,19 +21,42 @@ gradle test           # unit tests
 gradle lintDebug      # Android lint
 ```
 
-To build a signed release APK, supply a JKS keystore (optional):
+To build a release APK locally, supply the same persistent signing key and a
+validated stable version (`MAJOR.MINOR.PATCH`):
 
 ```bash
 LBR_KEYSTORE_PATH=release.jks \
 LBR_KEYSTORE_PASSWORD=... \
 LBR_KEY_ALIAS=... \
 LBR_KEY_PASSWORD=... \
-gradle assembleRelease
+gradle -PreleaseVersion=1.2.3 assembleRelease
 # Release APK: app/build/outputs/apk/release/app-release.apk
 ```
 
-Without `LBR_KEYSTORE_*` the release APK is signed with the Android debug key so
-it is installable but clearly not production-signed.
+Release builds intentionally fail without the release version and signing
+credentials. Debug builds continue to use the standard Android debug key.
+Version codes are derived from the stable tag as
+`MAJOR * 1,000,000 + MINOR * 1,000 + PATCH`; minor and patch are limited to
+0–999, ensuring increasing Android version codes for monotonically increasing
+SemVer releases.
+
+### Persistent GitHub Actions signing key
+
+The release workflow requires these repository **Actions secrets** before it
+will build or publish:
+
+- `LBR_RELEASE_KEYSTORE_BASE64` — base64 encoding of the persistent JKS file
+- `LBR_RELEASE_KEYSTORE_PASSWORD` — keystore password
+- `LBR_RELEASE_KEY_ALIAS` — signing-key alias
+- `LBR_RELEASE_KEY_PASSWORD` — signing-key password
+
+Create or retain one production JKS key, encode it without line breaks (for
+example, `base64 < release.jks | tr -d '\\n'`), then add the four values under
+GitHub **Settings → Secrets and variables → Actions → New repository secret**.
+Keep secure backups of the JKS and credentials: all future upgrades must use
+the same signing key. Never commit the keystore or passwords. The workflow
+decodes it only in the runner's temporary directory, validates the alias, and
+fails before release publication if any secret is absent or invalid.
 
 ## Usage
 
