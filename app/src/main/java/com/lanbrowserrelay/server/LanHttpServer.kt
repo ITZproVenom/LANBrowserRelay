@@ -65,7 +65,7 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
   if(!downloads.begin(id,start))return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE,MIME_PLAINTEXT,"Concurrent limit reached or duplicate id")
   var selectedCall:Call?=null;var upstream:Upstream?=null
   try{
-   val client=OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).build()
+   val client=OkHttpClient.Builder().dns { hostname -> UrlValidator.resolvePublicAddresses(hostname) }.followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).build()
    var url=start;var selected:Upstream?=null;var callSelected:Call?=null
    for(i in 0..5){
     val valid=UrlValidator.validate(url).getOrElse{throw IOException("Redirect blocked: ${it.message}")}

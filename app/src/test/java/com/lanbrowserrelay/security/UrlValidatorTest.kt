@@ -35,6 +35,13 @@ class UrlValidatorTest {
     }
 
     @Test
+    fun resolverRejectsLoopbackAtConnectionTime() {
+        assertTrue(runCatching {
+            UrlValidator.resolvePublicAddresses("127.0.0.1")
+        }.isFailure)
+    }
+
+    @Test
     fun filenameIsSafeForContentDisposition() {
         val name = UrlValidator.safeFilename("../../my\\\\file?.zip")
         assertFalse(name.contains('/'))

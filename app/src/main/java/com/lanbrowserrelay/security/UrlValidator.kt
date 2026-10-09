@@ -3,6 +3,7 @@ package com.lanbrowserrelay.security
 import java.net.InetAddress
 import java.net.URI
 import java.net.URL
+import java.net.UnknownHostException
 
 /**
  * Validates HTTP destinations before any outbound request and after every redirect.
@@ -26,14 +27,24 @@ object UrlValidator {
                 return Result.failure(SecurityException("Local hosts are blocked"))
             }
 
-            val addresses = InetAddress.getAllByName(host)
-            if (addresses.isEmpty() || addresses.any(::blocked)) {
-                return Result.failure(SecurityException("Local/reserved destination blocked"))
-            }
+            resolvePublicAddresses(host)
             Result.success(uri.toURL())
         } catch (_: Exception) {
             Result.failure(SecurityException("Invalid URL"))
         }
+    }
+
+    /**
+     * Call this from OkHttp's DNS hook as well as during URL validation. That second
+     * check prevents a hostname that changes from public to private from reaching
+     * a local service between validation and the actual connection.
+     */
+    fun resolvePublicAddresses(hostname: String): List<InetAddress> {
+        val addresses = InetAddress.getAllByName(hostname).toList()
+        if (addresses.isEmpty() || addresses.any(::blocked)) {
+            throw UnknownHostException("Local/reserved destination blocked")
+        }
+        return addresses
     }
 
     private fun blocked(ip: InetAddress): Boolean {
