@@ -79,7 +79,7 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
    }
    val r=selected?:throw IOException("No upstream response");val call=callSelected?:throw IOException("No upstream request")
    upstream=r;selectedCall=call
-   if(!r.isSuccessful){r.close();calls.remove(id,call);downloads.finish(id,"FAILED",0,"HTTP ${r.code}");return newFixedLengthResponse(Response.Status.lookup(r.code)?:Response.Status.BAD_GATEWAY,MIME_PLAINTEXT,"Upstream error: ${r.code}")}
+   if(!r.isSuccessful){r.close();calls.remove(id,call);downloads.finish(id,"FAILED",0,"HTTP ${r.code}");return newFixedLengthResponse(Response.Status.lookup(r.code)?:Response.Status.INTERNAL_ERROR,MIME_PLAINTEXT,"Upstream error: ${r.code}")}
    val body=r.body?:throw IOException("Empty upstream body");val length=body.contentLength().takeIf{it>=0}
    if(length!=null&&length>DownloadPolicy.MAX_BYTES){r.close();calls.remove(id,call);downloads.finish(id,"LIMIT_EXCEEDED",0,"File exceeds 100 MB limit");return json(JSONObject().put("error","File exceeds 100 MB limit").toString(),Response.Status.PAYLOAD_TOO_LARGE)}
    val filename=UrlValidator.safeFilename(hint?:UrlValidator.filenameFrom(r.header("Content-Disposition"),r.request.url.toString()))
@@ -100,7 +100,7 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
       if(n<0){val short=length!=null&&transferred<length;closed=true;finish(if(short)"FAILED" else "COMPLETED",if(short)"Upstream ended early" else null);cleanup();return -1}
       if(n>0){transferred+=n;val now=System.currentTimeMillis();if(now-time>=500){speed=((transferred-previous)*1000L)/(now-time).coerceAtLeast(1);time=now;previous=transferred};downloads.progress(id,filename,length,transferred,speed)}
       return n
-     }catch(e:IOException){if(!finished)finish(if(call.isCanceled)"CANCELLED" else "FAILED",e.message);closed=true;cleanup();throw e}
+     }catch(e:IOException){if(!finished)finish(if(call.isCanceled())"CANCELLED" else "FAILED",e.message);closed=true;cleanup();throw e}
     }
     override fun close(){if(!finished)finish("CANCELLED","Client disconnected or transfer cancelled");closed=true;cleanup()}
    }
@@ -109,8 +109,8 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
    output.addHeader("Content-Disposition","attachment; filename=\"$filename\"; filename*=UTF-8''$enc");output.addHeader("X-Download-Id",id);return output
   }catch(e:Exception){
    calls.remove(id);try{upstream?.close()}catch(_:Exception){}
-   downloads.finish(id,if(selectedCall?.isCanceled==true)"CANCELLED" else "FAILED",0,e.message?: "Download failed")
-   log("Download failed: ${e.message}");return newFixedLengthResponse(Response.Status.BAD_GATEWAY,MIME_PLAINTEXT,e.message?: "Download failed")
+   downloads.finish(id,if(selectedCall?.isCanceled()==true"CANCELLED" else "FAILED",0,e.message?: "Download failed")
+   log("Download failed: ${e.message}");return newFixedLengthResponse(Response.Status.INTERNAL_ERROR,MIME_PLAINTEXT,e.message?: "Download failed")
   }
  }
  private fun status():String=JSONObject().put("running",true).put("clients",clients.get()).put("activeCount",downloads.activeCount()).put("maxDownloadBytes",DownloadPolicy.MAX_BYTES).put("totalBytesServed",downloads.totalBytesServed()).put("downloads",JSONArray().apply{downloads.recent().forEach{d->put(JSONObject().put("id",d.id).put("url",d.url).put("filename",d.filename).put("bytes",d.bytes).put("total",d.total?:JSONObject.NULL).put("speed",d.speed).put("status",d.status).put("error",d.error?:JSONObject.NULL))}}).toString()
