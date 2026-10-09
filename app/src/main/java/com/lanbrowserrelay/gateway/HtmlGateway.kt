@@ -1,16 +1,21 @@
 package com.lanbrowserrelay.gateway
 import com.lanbrowserrelay.security.UrlValidator
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.net.InetAddress
 import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 class HtmlGateway(private val maxBytes:Int=5_000_000){
- private val client=OkHttpClient.Builder().dns { hostname -> UrlValidator.resolvePublicAddresses(hostname) }.followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).build()
+ private val client=OkHttpClient.Builder().dns(object : Dns {
+  override fun lookup(hostname: String): List<InetAddress> =
+   UrlValidator.resolvePublicAddresses(hostname)
+ }).followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(25,TimeUnit.SECONDS).build()
  data class Page(val type:String,val bytes:ByteArray,val status:Int,val url:String)
  fun fetch(raw:String):Page{
   val safe=UrlValidator.validate(raw).getOrElse{return error(403,"Blocked URL",it.message?: "Invalid URL",raw)}

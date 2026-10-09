@@ -7,6 +7,7 @@ import com.lanbrowserrelay.gateway.HtmlGateway
 import com.lanbrowserrelay.security.UrlValidator
 import fi.iki.elonen.NanoHTTPD
 import okhttp3.Call
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response as Upstream
@@ -15,6 +16,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.net.InetAddress
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -65,7 +67,10 @@ class LanHttpServer(private val context:Context,port:Int,private val downloads:D
   if(!downloads.begin(id,start))return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE,MIME_PLAINTEXT,"Concurrent limit reached or duplicate id")
   var selectedCall:Call?=null;var upstream:Upstream?=null
   try{
-   val client=OkHttpClient.Builder().dns { hostname -> UrlValidator.resolvePublicAddresses(hostname) }.followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).build()
+   val client=OkHttpClient.Builder().dns(object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> =
+     UrlValidator.resolvePublicAddresses(hostname)
+   }).followRedirects(false).followSslRedirects(false).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).build()
    var url=start;var selected:Upstream?=null;var callSelected:Call?=null
    for(i in 0..5){
     val valid=UrlValidator.validate(url).getOrElse{throw IOException("Redirect blocked: ${it.message}")}
