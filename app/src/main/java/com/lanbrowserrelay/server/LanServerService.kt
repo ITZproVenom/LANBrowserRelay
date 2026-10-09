@@ -24,7 +24,7 @@ class LanServerService:Service(){
  @Synchronized private fun startServer(){
   address=detectAddress()?:"Not connected"
   try{val http=LanHttpServer(this,8080,downloads){line->synchronized(lines){lines.add(line);while(lines.size>100)lines.removeAt(0)}}
-   http.start(SOCKET_READ_TIMEOUT,false);server=http
+   http.start(10_000,false);server=http
    (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).notify(1001,notification("http://${address}:8080"))
    log("Server started at ${address}:8080")
   }catch(e:Exception){log("Server start failed: ${e.message}")}
