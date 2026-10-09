@@ -119,8 +119,7 @@ class LanHttpServer(
 
     private fun authorize(session: IHTTPSession, csrf: String?, requireOrigin: Boolean): UiSessionStore.Session? {
         val origin = header(session, "origin")
-        if (requireOrigin && origin == null) return null
-        if (origin != null && !RequestOriginPolicy.isExpectedOrigin(origin, bindAddress, port)) return null
+        if (!RequestOriginPolicy.isAllowedOrigin(origin, bindAddress, port, requireOrigin)) return null
         if (!RequestOriginPolicy.isSameOriginFetch(header(session, "sec-fetch-site"))) return null
         if (!RequestOriginPolicy.isExpectedHost(header(session, "host"), bindAddress, port)) return null
         return sessions.authorize(cookie(session), csrf)
