@@ -255,7 +255,7 @@ class RelayServer(private val app: Context, port: Int, private val log: (String)
         fun json()=JSONObject().put("id",id).put("url",url).put("filename",filename).put("bytes",bytes).put("length",length?:JSONObject.NULL).put("speed",speed).put("status",status).put("error",error?:JSONObject.NULL)
     }
     private val transfers=ConcurrentHashMap<String,Transfer>();private val calls=ConcurrentHashMap<String,Call>();private val slots=Semaphore(3);private val total=AtomicLong()
-    private val client=OkHttpClient.Builder().dns(Dns { hostname: String -> UrlPolicy.resolvePublic(hostname) }).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
+    private val client=OkHttpClient.Builder().dns(object : Dns { override fun lookup(hostname: String): List<InetAddress> = UrlPolicy.resolvePublic(hostname) }).connectTimeout(15,TimeUnit.SECONDS).readTimeout(30,TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
     override fun serve(s:IHTTPSession):Response {
         if(s.method==Method.OPTIONS)return cors(txt(Response.Status.OK,"text/plain",""))
         if(s.method!=Method.GET&&s.method!=Method.HEAD)return cors(txt(Response.Status.METHOD_NOT_ALLOWED,"text/plain","GET only"))
