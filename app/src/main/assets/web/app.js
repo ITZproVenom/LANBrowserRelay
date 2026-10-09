@@ -277,6 +277,27 @@
     catch (_) {}
   });
 
+  // Keep the browser chrome in sync with iframe navigation. Without this
+  // listener the loading indicator never clears and proxied page links bypass
+  // the download interception logic above.
+  viewer.addEventListener('load', () => {
+    $('loader').classList.add('hidden');
+    patchFrame();
+    try {
+      const title = viewer.contentDocument && viewer.contentDocument.title;
+      $('pagetitle').textContent = title && title.trim()
+        ? title.trim()
+        : (currentUrl ? hostname(currentUrl) : 'Page loaded');
+    } catch (_) {
+      $('pagetitle').textContent = currentUrl ? hostname(currentUrl) : 'Page loaded';
+    }
+  });
+
+  viewer.addEventListener('error', () => {
+    $('loader').classList.add('hidden');
+    showError('This page could not be loaded through the TV relay.');
+  });
+
   renderTabs();
   showHomeForActiveTab();
   pollStatus();
