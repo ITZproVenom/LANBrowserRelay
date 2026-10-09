@@ -55,7 +55,7 @@ class HtmlGateway(private val baseProxyPath: String = "/browse") {
                     )
                 }
 
-                val bodyBytes = body?.byteStream()?.use { readBounded(it, MAX_RESPONSE_BYTES) } ?: ByteArray(0)
+                val bodyBytes = if (body == null) ByteArray(0) else body.byteStream().use { readBounded(it, MAX_RESPONSE_BYTES) }
                 if (bodyBytes == null) {
                     return GatewayResult(
                         "text/html; charset=utf-8",
