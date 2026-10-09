@@ -7,13 +7,16 @@
   let nextTabId = 2;
   let activeTabId = 1;
   let currentUrl = '';
+  const csrfToken = document.querySelector('meta[name="relay-csrf-token"]')?.content || '';
+  const apiHeaders = { 'X-Relay-CSRF': csrfToken };
+  const contentPort = Number(document.querySelector('meta[name="relay-content-port"]')?.content) || 8081;
+  const relayContentOrigin = (() => { const origin = new URL(location.href); origin.port = String(contentPort); return origin.origin; })();
+  let frameMessageWindow = Date.now();
+  let frameMessageCount = 0;
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[ch]));
-
-  const isDownloadCandidate = url =>
-    /\.(?:zip|apk|pdf|mp4|mkv|mp3|png|jpe?g|gif|webp|7z|rar|tar|gz|iso|exe|bin|csv|xlsx?|docx?|pptx?)(?:$|[?#])/i.test(url);
 
   function activeTab() { return tabs.get(activeTabId); }
 
@@ -81,7 +84,7 @@
     $('pageerror').classList.add('hidden');
     $('pageurl').textContent = url;
     $('pagetitle').textContent = 'Loading…';
-    viewer.src = '/browse?url=' + encodeURIComponent(url);
+    viewer.src = relayContentOrigin + '/browse?url=' + encodeURIComponent(url);
     renderTabs();
   }
 
@@ -100,52 +103,32 @@
     $('pageerror').classList.remove('hidden');
   }
 
-  function frameTarget(anchor) {
-    const raw = anchor.getAttribute('href') || '';
-    if (!raw || raw.startsWith('#') || /^(javascript|mailto|tel|data):/i.test(raw)) return null;
+  function handleFrameMessage(event) {
+    // The frame's opaque origin serializes as "null". Verify both it and the
+    // exact frame WindowProxy before treating a message as a clicked link.
+    if (event.source !== viewer.contentWindow || event.origin !== 'null') return;
+    const message = event.data;
+    if (!message || typeof message !== 'object' ||
+        message.type !== 'lanbrowserrelay:navigate' ||
+        typeof message.url !== 'string' || message.url.length > 8192 ||
+        Object.keys(message).length !== 2 ||
+        !Object.prototype.hasOwnProperty.call(message, 'url') ||
+        !Object.prototype.hasOwnProperty.call(message, 'type')) return;
+
+    const now = Date.now();
+    if (now - frameMessageWindow >= 60_000) { frameMessageWindow = now; frameMessageCount = 0; }
+    if (++frameMessageCount > 30) return;
     let target;
-    try {
-      const frameBase = viewer.contentWindow.location.href;
-      target = new URL(raw, frameBase);
-      // The gateway rewrites remote URLs into /browse?url=... . Unwrap that route
-      // before deciding whether the user clicked a download or a normal link.
-      if (target.origin === location.origin && target.pathname === '/browse') {
-        const original = target.searchParams.get('url');
-        if (original) target = new URL(original);
-      }
-    } catch (_) { return null; }
-    return target.href;
+    try { target = new URL(message.url); }
+    catch (_) { return; }
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return;
+    if (target.origin === location.origin) return;
+    // The bridge can only request ordinary navigation. It has no download,
+    // cancellation, API, or UI-mutation command; the user starts downloads.
+    navigate(target.href);
   }
 
-  function patchFrame() {
-    try {
-      const doc = viewer.contentDocument;
-      if (!doc || doc.documentElement.dataset.relayClicksPatched === '1') return;
-      doc.documentElement.dataset.relayClicksPatched = '1';
-      doc.addEventListener('click', event => {
-        const anchor = event.target.closest && event.target.closest('a[href]');
-        if (!anchor) return;
-        const target = frameTarget(anchor);
-        if (!target) return;
-        if (target === location.origin + '/') {
-          event.preventDefault();
-          showHomeForActiveTab();
-          return;
-        }
-        if (!/^https?:\/\//i.test(target)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (anchor.hasAttribute('download') || isDownloadCandidate(target)) {
-          startDownload(target, anchor.getAttribute('download') || filenameFromUrl(target));
-        } else {
-          navigate(target);
-        }
-      }, true);
-    } catch (_) {
-      // Some pages deliberately prevent same-origin access; their internal
-      // navigation still works as far as the gateway can serve it.
-    }
-  }
+  window.addEventListener('message', handleFrameMessage);
 
   function filenameFromUrl(url) {
     try {
@@ -165,15 +148,22 @@
     transfers.set(id, transfer);
     renderDownloads();
 
-    const link = document.createElement('a');
-    link.href = '/api/download?id=' + encodeURIComponent(id) +
-      '&url=' + encodeURIComponent(url) +
-      '&filename=' + encodeURIComponent(transfer.filename);
-    link.download = transfer.filename;
-    link.hidden = true;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/api/download';
+    form.hidden = true;
+    for (const [name, value] of Object.entries({
+      id, url, filename: transfer.filename, _csrf: csrfToken
+    })) {
+      const field = document.createElement('input');
+      field.type = 'hidden';
+      field.name = name;
+      field.value = value;
+      form.appendChild(field);
+    }
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
     $('downloads').classList.remove('hidden');
   }
 
@@ -210,7 +200,7 @@
 
   async function pollStatus() {
     try {
-      const response = await fetch('/api/status', { cache: 'no-store' });
+      const response = await fetch('/api/status', { cache: 'no-store', headers: apiHeaders });
       if (!response.ok) throw new Error('status request failed');
       const status = await response.json();
       $('connection').className = 'ok';
@@ -273,24 +263,20 @@
   $('downloadList').addEventListener('click', async event => {
     const button = event.target.closest('[data-cancel]');
     if (!button) return;
-    try { await fetch('/api/cancel?id=' + encodeURIComponent(button.dataset.cancel), { cache: 'no-store' }); }
-    catch (_) {}
+    try {
+      await fetch('/api/cancel', {
+        method: 'POST', cache: 'no-store', headers: {
+          ...apiHeaders, 'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({ id: button.dataset.cancel })
+      });
+    } catch (_) {}
   });
 
-  // Keep the browser chrome in sync with iframe navigation. Without this
-  // listener the loading indicator never clears and proxied page links bypass
-  // the download interception logic above.
   viewer.addEventListener('load', () => {
     $('loader').classList.add('hidden');
-    patchFrame();
-    try {
-      const title = viewer.contentDocument && viewer.contentDocument.title;
-      $('pagetitle').textContent = title && title.trim()
-        ? title.trim()
-        : (currentUrl ? hostname(currentUrl) : 'Page loaded');
-    } catch (_) {
-      $('pagetitle').textContent = currentUrl ? hostname(currentUrl) : 'Page loaded';
-    }
+    // The sandbox intentionally makes the document cross-origin to this UI.
+    $('pagetitle').textContent = currentUrl ? hostname(currentUrl) : 'Page loaded';
   });
 
   viewer.addEventListener('error', () => {
