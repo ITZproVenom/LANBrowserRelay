@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: [ 'v*' ]
+    branches: [ 'release/v*' ]
   workflow_dispatch:
     inputs:
       tag:
@@ -26,7 +27,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$INPUT_TAG"
+          elif [[ "$GITHUB_REF_TYPE" == "branch" ]]; then
+            case "$GITHUB_REF_NAME" in
+              release/v*) TAG="${GITHUB_REF_NAME#release/}" ;;
+              *) echo "::error::Only release/vMAJOR.MINOR.PATCH branches can publish a release"; exit 1 ;;
+            esac
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
           python3 - "$TAG" >> "$GITHUB_OUTPUT" <<'PY'
           import re, sys
           tag = sys.argv[1]
@@ -46,9 +56,16 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
             git checkout --detach "refs/tags/$TAG"
-          elif [[ "$TAG" != "$GITHUB_REF_NAME" ]]; then
-            echo "::error::Push tag does not match the requested version tag"
-            exit 1
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            if [[ "$TAG" != "$GITHUB_REF_NAME" ]]; then
+              echo "::error::Push tag does not match the requested version tag"
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF_TYPE" == "branch" ]]; then
+            if [[ "$GITHUB_REF_NAME" != "release/$TAG" ]]; then
+              echo "::error::Release branch name does not match the validated version"
+              exit 1
+            fi
           fi
 
       - name: Validate and install persistent signing key
@@ -195,7 +212,7 @@ jobs:
           - Proxied HTML is isolated on a distinct port and the control plane is session/CSRF protected.
           EOF
           )
-          gh release create "$RELEASE_TAG" \
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
             "$APK#LANBrowserRelay-$RELEASE_VERSION.apk" \
             --title "LAN Browser Relay $RELEASE_VERSION" \
             --notes "$NOTES"
