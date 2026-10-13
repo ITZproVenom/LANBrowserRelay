@@ -104,6 +104,7 @@ class BoundedRelayInputStream(
         return try {
             super.read()
         } catch (e: IOException) {
+            terminal = true
             onError(bytesRead, e.message ?: "Upstream read failed")
             throw e
         }

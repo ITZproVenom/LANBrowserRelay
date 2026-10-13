@@ -20,6 +20,7 @@ import com.lanbrowserrelay.server.LanServerService
 class MainActivity:Activity(){
  private var service:LanServerService?=null;private var bound=false
  private lateinit var status:TextView;private lateinit var address:TextView;private lateinit var stats:TextView;private lateinit var logs:TextView;private lateinit var preview:WebView
+ private var previewAddress:String?=null
  private val handler=Handler(Looper.getMainLooper());private val refresher=object:Runnable{override fun run(){refresh();handler.postDelayed(this,1200)}}
  private val connection=object:ServiceConnection{
   override fun onServiceConnected(n:ComponentName?,b:IBinder?){service=(b as? LanServerService.LocalBinder)?.service();bound=true;refresh();loadPreview()}
@@ -40,7 +41,11 @@ class MainActivity:Activity(){
  }
  override fun onStart(){super.onStart();bindService(Intent(this,LanServerService::class.java),connection,Context.BIND_AUTO_CREATE);handler.post(refresher)}
  override fun onStop(){handler.removeCallbacks(refresher);if(bound){unbindService(connection);bound=false};super.onStop()}
- private fun loadPreview(){val s=service?:return;if(s.isRunning()&&preview.url==null)preview.loadUrl("http://127.0.0.1:${s.port()}/")}
+ private fun loadPreview(){
+  val s=service?:return
+  val target="http://${s.address()}:${s.port()}/"
+  if(s.isRunning()&&previewAddress!=target){previewAddress=target;preview.loadUrl(target)}
+ }
  private fun refresh(){val s=service?:return;val running=s.isRunning();status.text=if(running)"● Server running" else "◌ Waiting for LAN";status.setTextColor(if(running)Color.rgb(88,217,196) else Color.YELLOW)
   address.text=if(running)"http://${s.address()}:${s.port()}" else "LAN URL: unavailable"
   stats.text="Active downloads: ${s.downloads().activeCount()} · Relayed: ${s.downloads().totalBytesServed()/1_000_000} MB · Requests: ${s.clients()}"

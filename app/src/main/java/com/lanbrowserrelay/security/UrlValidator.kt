@@ -21,6 +21,9 @@ object UrlValidator {
 
             val host = uri.host?.removeSurrounding("[", "]")?.lowercase()
                 ?: return Result.failure(SecurityException("Missing host"))
+            if (uri.rawUserInfo != null) {
+                return Result.failure(SecurityException("Credentials in URLs are blocked"))
+            }
             if (host == "localhost" || host.endsWith(".localhost") ||
                 host == "metadata.google.internal"
             ) {
@@ -74,21 +77,27 @@ object UrlValidator {
         if (bytes.size == 16) {
             val first = bytes[0]
             val second = bytes[1]
-            if ((first and 0xfe) == 0xfc) return true // Unique-local fc00::/7.
-            if (first == 0xfe && (second and 0xc0) == 0xc0) return true // Site-local fec0::/10.
-            if (first == 0x20 && second == 0x01 &&
-                bytes[2] == 0x0d && bytes[3] == 0xb8
-            ) return true // Documentation 2001:db8::/32.
-
             val firstTenZero = bytes.take(10).all { it == 0 }
             val mapped = firstTenZero && bytes[10] == 0xff && bytes[11] == 0xff
             val compatible = bytes.take(12).all { it == 0 }
-            if (mapped || compatible) {
-                val embedded = InetAddress.getByAddress(
-                    bytes.takeLast(4).map { it.toByte() }.toByteArray()
-                )
-                if (blocked(embedded)) return true
+            if (mapped || compatible) return true
+
+            // Only global-unicast IPv6 is eligible; this excludes unspecified,
+            // loopback, ULA, link/site-local, multicast and other special ranges.
+            if ((first and 0xe0) != 0x20) return true
+            if (first == 0x20 && second == 0x01 && bytes[2] in 0..1) return true // IETF protocol assignments, incl. Teredo.
+            if (first == 0x20 && second == 0x02) return true // 6to4 embeds an arbitrary IPv4 destination.
+            if (first == 0x20 && second == 0x01 &&
+                bytes[2] == 0x0d && bytes[3] == 0xb8
+            ) return true // Documentation 2001:db8::/32.
+            if (first == 0x3f && second == 0xff && (bytes[2] and 0xf0) == 0) {
+                return true // Documentation 3fff::/20.
             }
+            val nat64WellKnown = first == 0 && second == 0x64 && bytes[2] == 0xff && bytes[3] == 0x9b &&
+                bytes.slice(4..11).all { it == 0 }
+            val nat64Local = first == 0 && second == 0x64 && bytes[2] == 0xff && bytes[3] == 0x9b &&
+                bytes[4] == 0 && bytes[5] == 1
+            if (nat64WellKnown || nat64Local) return true
             return false
         }
 
