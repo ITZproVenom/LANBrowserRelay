@@ -19,6 +19,11 @@
     const anchor = event.target instanceof Element
       ? event.target.closest('a[href]') : null;
     if (!anchor) return;
+    if (!event.isTrusted) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     const target = unwrapRelayRoute(anchor.href);
     if (!target || !['http:', 'https:'].includes(target.protocol)) return;
     event.preventDefault();

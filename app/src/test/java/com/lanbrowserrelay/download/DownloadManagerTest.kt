@@ -10,15 +10,15 @@ class DownloadManagerTest {
     @Test
     fun concurrencyLimitIsEnforced() {
         val manager = DownloadManager()
-        assertTrue(manager.begin("a", "https://example.com/a"))
-        assertTrue(manager.begin("b", "https://example.com/b"))
-        assertTrue(manager.begin("c", "https://example.com/c"))
-        // Fourth concurrent request must be rejected.
-        assertFalse(manager.begin("d", "https://example.com/d"))
+        assertTrue(manager.begin("a", "https://example.com/a", "session-a"))
+        assertTrue(manager.begin("b", "https://example.com/b", "session-b"))
+        assertTrue(manager.begin("c", "https://example.com/c", "session-c"))
+        // Fourth session must be rejected by the global concurrent-transfer cap.
+        assertFalse(manager.begin("d", "https://example.com/d", "session-d"))
         assertEquals(3, manager.activeCount())
 
         manager.finish("a", "COMPLETED", 10)
-        assertTrue(manager.begin("e", "https://example.com/e"))
+        assertTrue(manager.begin("e", "https://example.com/e", "session-e"))
         assertEquals(3, manager.activeCount())
     }
 

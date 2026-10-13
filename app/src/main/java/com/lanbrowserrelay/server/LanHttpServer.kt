@@ -78,10 +78,6 @@ class LanHttpServer(
                     val owner = authorize(session, header(session, "x-relay-csrf"), requireOrigin = false)
                     if (owner == null) unauthorized() else json(status(owner.cookie))
                 } else methodNotAllowed()
-                "/api/logs" -> if (session.method == Method.GET) {
-                    val owner = authorize(session, header(session, "x-relay-csrf"), requireOrigin = false)
-                    if (owner == null) unauthorized() else json(JSONObject().put("logs", JSONArray(recentLogs())).toString())
-                } else methodNotAllowed()
                 "/api/cancel" -> if (session.method == Method.POST) {
                     val owner = authorize(session, header(session, "x-relay-csrf"), requireOrigin = true)
                     if (owner == null) unauthorized() else cancel(session.parms["id"], owner.cookie)

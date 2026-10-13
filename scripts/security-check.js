@@ -40,6 +40,7 @@ assert.doesNotMatch(contentServer, /api\/status|api\/cancel|api\/download/);
 assert.match(uiServer, /HttpOnly; SameSite=Strict/);
 assert.match(uiServer, /RequestOriginPolicy\.isAllowedOrigin/);
 assert.match(uiServer, /x-relay-csrf/);
+assert.doesNotMatch(uiServer, /"\/api\/logs" ->/);
 assert.match(uiServer, /"\/api\/cancel" -> if \(session\.method == Method\.POST\)/);
 assert.match(uiServer, /"\/api\/download" -> if \(session\.method == Method\.POST\)/);
 assert.doesNotMatch(uiServer, /apiToken|queryToken|__RELAY_API_TOKEN__/);
