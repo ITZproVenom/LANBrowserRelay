@@ -161,8 +161,8 @@ class LanServerService : Service() {
     }
 
     private fun detectAddress(): String? {
-        val activeName: String?
-        val activeEthernet: Boolean
+        var activeName: String? = null
+        var activeEthernet = false
         try {
             val network = connectivity.activeNetwork
             val capabilities = network?.let { connectivity.getNetworkCapabilities(it) }
@@ -170,9 +170,8 @@ class LanServerService : Service() {
             activeName = properties?.interfaceName
             activeEthernet = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true
         } catch (e: Exception) {
+            // Keep safe defaults and continue selecting from available interfaces.
             Log.w("LanServerService", "Could not inspect active network", e)
-            activeName = null
-            activeEthernet = false
         }
 
         val interfaces = try { Collections.list(NetworkInterface.getNetworkInterfaces()) }
