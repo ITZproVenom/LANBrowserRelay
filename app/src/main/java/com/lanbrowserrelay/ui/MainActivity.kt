@@ -43,8 +43,12 @@ class MainActivity:Activity(){
  override fun onStop(){handler.removeCallbacks(refresher);if(bound){unbindService(connection);bound=false};super.onStop()}
  private fun loadPreview(){
   val s=service?:return
+  if(!s.isRunning()){
+   if(previewAddress!=null){preview.stopLoading();preview.loadUrl("about:blank");previewAddress=null}
+   return
+  }
   val target="http://${s.address()}:${s.port()}/"
-  if(s.isRunning()&&previewAddress!=target){previewAddress=target;preview.loadUrl(target)}
+  if(previewAddress!=target){previewAddress=target;preview.loadUrl(target)}
  }
  private fun refresh(){val s=service?:return;val running=s.isRunning();status.text=if(running)"● Server running" else "◌ Waiting for LAN";status.setTextColor(if(running)Color.rgb(88,217,196) else Color.YELLOW)
   address.text=if(running)"http://${s.address()}:${s.port()}" else "LAN URL: unavailable"
