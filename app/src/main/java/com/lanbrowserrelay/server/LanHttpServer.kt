@@ -76,7 +76,7 @@ class LanHttpServer(
                 "/app.js" -> staticGet(session, "web/app.js", "application/javascript; charset=utf-8")
                 "/api/status" -> if (session.method == Method.GET) {
                     val owner = authorize(session, header(session, "x-relay-csrf"), requireOrigin = false)
-                    if (owner == null) unauthorized() else json(status(owner))
+                    if (owner == null) unauthorized() else json(status(owner.cookie))
                 } else methodNotAllowed()
                 "/api/logs" -> if (session.method == Method.GET) {
                     val owner = authorize(session, header(session, "x-relay-csrf"), requireOrigin = false)
