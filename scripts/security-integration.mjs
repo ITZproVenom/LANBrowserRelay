@@ -61,10 +61,9 @@ const contentServer = await makeServer(async (req, res) => {
           headers:{'Content-Type':'text/plain'}, body:'id=victim'})
           .then(() => window.attackResults.cancelAttempt = 'sent')
           .catch(() => window.attackResults.cancelAttempt = 'blocked');
-        const form = document.createElement('form'); form.method='POST';
-        form.action='http://127.0.0.1:${portOf(uiServer)}/api/download';
-        form.innerHTML='<input name="url" value="https://example.com/file.zip">'; document.body.appendChild(form);
-        form.submit();
+        fetch('http://127.0.0.1:${portOf(uiServer)}/api/download', {method:'POST', mode:'no-cors', credentials:'include',
+          headers:{'Content-Type':'text/plain'}, body:'url=https%3A%2F%2Fexample.com%2Ffile.zip'})
+          .catch(() => {});
       </script><p>hostile content</p><a id="legit-link" href="/browse?url=https%3A%2F%2Fexample.net%2Flegit">Legit link</a></body></html>`;
     return send(res, 200, hostile, {
       'Content-Type': 'text/html; charset=utf-8',
