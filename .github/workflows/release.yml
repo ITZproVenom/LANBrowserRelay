@@ -68,7 +68,8 @@ jobs:
             fi
           fi
 
-      - name: Validate and install persistent signing key
+      - name: Configure APK signing
+        id: signing
         env:
           LBR_RELEASE_KEYSTORE_BASE64: ${{ secrets.LBR_RELEASE_KEYSTORE_BASE64 }}
           LBR_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.LBR_RELEASE_KEYSTORE_PASSWORD }}
@@ -77,12 +78,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in LBR_RELEASE_KEYSTORE_BASE64 LBR_RELEASE_KEYSTORE_PASSWORD LBR_RELEASE_KEY_ALIAS LBR_RELEASE_KEY_PASSWORD; do
+          names=(LBR_RELEASE_KEYSTORE_BASE64 LBR_RELEASE_KEYSTORE_PASSWORD LBR_RELEASE_KEY_ALIAS LBR_RELEASE_KEY_PASSWORD)
+          missing=0
+          present=0
+          for name in "${names[@]}"; do
             if [[ -z "${!name:-}" ]]; then
-              echo "::error::Required GitHub Actions secret is missing: $name"
-              exit 1
+              missing=$((missing + 1))
+            else
+              present=$((present + 1))
             fi
           done
+          if [[ "$present" == "0" ]]; then
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
+            echo "RELEASE_SIGNING_MODE=debug" >> "$GITHUB_ENV"
+            echo "::warning::Persistent signing secrets are not configured; publishing an installable debug-signed APK."
+            exit 0
+          fi
+          if [[ "$missing" != "0" ]]; then
+            echo "::error::Release signing is partially configured. Add all four LBR_RELEASE_* secrets or remove them all to use the debug build fallback."
+            exit 1
+          fi
           KEYSTORE="$RUNNER_TEMP/lanbrowserrelay-release.jks"
           if ! printf '%s' "$LBR_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE" || [[ ! -s "$KEYSTORE" ]]; then
             echo "::error::Persistent release keystore is not valid base64 or is empty"
@@ -98,7 +113,9 @@ jobs:
             printf 'LBR_KEYSTORE_PASSWORD=%s\n' "$LBR_RELEASE_KEYSTORE_PASSWORD"
             printf 'LBR_KEY_ALIAS=%s\n' "$LBR_RELEASE_KEY_ALIAS"
             printf 'LBR_KEY_PASSWORD=%s\n' "$LBR_RELEASE_KEY_PASSWORD"
+            printf 'RELEASE_SIGNING_MODE=release\n'
           } >> "$GITHUB_ENV"
+          echo "mode=release" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
@@ -130,26 +147,45 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: gradle --no-daemon -PreleaseVersion="$RELEASE_VERSION" test --stacktrace
 
-      - name: Lint
+      - name: Lint release variant
+        if: steps.signing.outputs.mode == 'release'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: gradle --no-daemon -PreleaseVersion="$RELEASE_VERSION" lintRelease --stacktrace
 
+      - name: Lint installable debug variant
+        if: steps.signing.outputs.mode == 'debug'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: gradle --no-daemon -PreleaseVersion="$RELEASE_VERSION" lintDebug --stacktrace
+
       - name: Assemble signed release APK
+        if: steps.signing.outputs.mode == 'release'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: gradle --no-daemon -PreleaseVersion="$RELEASE_VERSION" assembleRelease --stacktrace
+
+      - name: Assemble installable debug APK
+        if: steps.signing.outputs.mode == 'debug'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: gradle --no-daemon -PreleaseVersion="$RELEASE_VERSION" assembleDebug --stacktrace
 
       - name: Verify APK integrity, signature, and version metadata
         id: apk
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
           EXPECTED_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
-          test -s "$APK" || { echo "Release APK missing or empty"; exit 1; }
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            APK="app/build/outputs/apk/release/app-release.apk"
+          else
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+          fi
+          test -s "$APK" || { echo "APK missing or empty: $APK"; exit 1; }
           unzip -t "$APK" >/dev/null
           AAPT="$ANDROID_HOME/build-tools/34.0.0/aapt"
           APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
@@ -174,6 +210,11 @@ jobs:
           echo "apk_size=$SIZE" >> "$GITHUB_OUTPUT"
           echo "apk_sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "signer=$(tr '\n' ';' < "$RUNNER_TEMP/signature.txt")" >> "$GITHUB_OUTPUT"
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            echo "signing_description=Persistent production keystore" >> "$GITHUB_OUTPUT"
+          else
+            echo "signing_description=Android debug key (installable test build; not production-signed)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create GitHub Release
         env:
@@ -183,10 +224,16 @@ jobs:
           APK_SHA256: ${{ steps.apk.outputs.apk_sha256 }}
           APK_SIZE: ${{ steps.apk.outputs.apk_size }}
           SIGNER: ${{ steps.apk.outputs.signer }}
+          SIGNING_DESCRIPTION: ${{ steps.apk.outputs.signing_description }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            APK="app/build/outputs/apk/release/app-release.apk"
+          else
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+          fi
           NOTES=$(cat <<EOF
           ## LAN Browser Relay $RELEASE_VERSION
 
@@ -196,7 +243,7 @@ jobs:
           **APK file size:** $(numfmt --to=iec "$APK_SIZE") bytes ($APK_SIZE)
           **SHA-256:** \`$APK_SHA256\`
           **Signing certificate:** $SIGNER
-          **Signing:** Persistent production keystore supplied from GitHub Actions secrets.
+          **Signing:** $SIGNING_DESCRIPTION.
           **API level:** minSdk 24 (Android 7.0+), targetSdk 34
 
           ### Install
