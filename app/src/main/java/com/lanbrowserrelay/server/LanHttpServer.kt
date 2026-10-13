@@ -43,6 +43,7 @@ class LanHttpServer(
 
     fun startContent() = contentServer.start(10_000, false)
     fun isAliveWithContent() = isAlive && contentServer.isAlive
+    fun listeningPort() = port
     fun contentPort() = contentPort
     private fun log(message: String) {
         val line = "${System.currentTimeMillis() % 100000}: $message"
