@@ -125,28 +125,48 @@ class LanServerService : Service() {
     @Synchronized
     private fun startServer(host: String) {
         if (destroyed || host == "Not connected") return
-        val http = LanHttpServer(this, host, 8080, downloads) { line ->
-            synchronized(lines) {
-                lines.add(line)
-                while (lines.size > 100) lines.removeAt(0)
+
+        val attemptedPorts = mutableListOf<Int>()
+        var lastFailure: Exception? = null
+        for (uiPort in ListenerPortPairs.candidates()) {
+            attemptedPorts.add(uiPort)
+            val http = LanHttpServer(this, host, uiPort, downloads) { line ->
+                synchronized(lines) {
+                    lines.add(line)
+                    while (lines.size > 100) lines.removeAt(0)
+                }
+            }
+            try {
+                http.start(10_000, false)
+                http.startContent()
+                if (!http.isAliveWithContent()) {
+                    throw IllegalStateException("Listener pair $uiPort/${uiPort + 1} did not fully start")
+                }
+                server = http
+                boundAddress = host
+                retryAttempt = 0
+                retryScheduled = false
+                retryAddress = null
+                handler.removeCallbacks(retryRunnable)
+                if (uiPort != ListenerPortPairs.DEFAULT_UI_PORT) {
+                    val skipped = attemptedPorts.dropLast(1).joinToString(", ") { "$it/${it + 1}" }
+                    log("Preferred listener ports unavailable ($skipped); using $uiPort/${uiPort + 1}")
+                }
+                log("Server started on selected LAN interface $host:$uiPort (content port ${uiPort + 1})")
+                return
+            } catch (e: Exception) {
+                lastFailure = e
+                try { http.shutdown() } catch (stopError: Exception) {
+                    Log.w("LanServerService", "Could not stop failed listener pair $uiPort/${uiPort + 1}", stopError)
+                }
             }
         }
-        try {
-            http.start(10_000, false)
-            http.startContent()
-            if (!http.isAliveWithContent()) throw IllegalStateException("One of the HTTP listeners did not start")
-            server = http
-            boundAddress = host
-            retryAttempt = 0
-            handler.removeCallbacks(retryRunnable)
-            log("Server started on selected LAN interface $host")
-        } catch (e: Exception) {
-            try { http.shutdown() } catch (_: Exception) { }
-            server = null
-            boundAddress = null
-            log("Server start failed: ${e.message?.take(160) ?: "bind error"}")
-            scheduleRetry()
-        }
+
+        server = null
+        boundAddress = null
+        val attempted = attemptedPorts.joinToString(", ") { "$it/${it + 1}" }
+        log("Server start failed; tried UI/content port pairs $attempted: ${lastFailure?.message?.take(160) ?: "bind error"}")
+        scheduleRetry()
     }
 
     private fun scheduleRetry() {
@@ -224,7 +244,7 @@ class LanServerService : Service() {
 
     fun isRunning() = server?.isAliveWithContent() == true && boundAddress == address
     fun address() = address
-    fun port() = 8080
+    fun port() = server?.listeningPort() ?: ListenerPortPairs.DEFAULT_UI_PORT
     fun downloads() = downloads
     fun clients() = server?.connectedClients() ?: 0
     fun logs(): List<String> = server?.recentLogs() ?: synchronized(lines) { lines.toList().takeLast(40) }
