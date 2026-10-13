@@ -225,10 +225,15 @@ jobs:
           APK_SIZE: ${{ steps.apk.outputs.apk_size }}
           SIGNER: ${{ steps.apk.outputs.signer }}
           SIGNING_DESCRIPTION: ${{ steps.apk.outputs.signing_description }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
+          if [[ "$SIGNING_MODE" == "release" ]]; then
+            APK="app/build/outputs/apk/release/app-release.apk"
+          else
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+          fi
           NOTES=$(cat <<EOF
           ## LAN Browser Relay $RELEASE_VERSION
 
