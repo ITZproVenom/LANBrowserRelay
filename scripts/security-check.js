@@ -19,10 +19,15 @@ for (const forbidden of ['allow-same-origin', 'allow-top-navigation', 'allow-top
   assert.ok(!sandbox.split(/\s+/).includes(forbidden), `unsafe iframe sandbox flag: ${forbidden}`);
 }
 assert.match(app, /event\.source !== viewer\.contentWindow \|\| event\.origin !== 'null'/);
-assert.match(app, /Object\.keys\(message\)\.length !== 2/);
+assert.match(app, /Object\.keys\(message\)\.length !== 3/);
+assert.match(app, /message\.token !== csrfToken/);
 assert.doesNotMatch(app, /message\.download/);
 assert.match(app, /contentPort[\s\S]*relayContentOrigin/);
 assert.match(bridge, /type: 'lanbrowserrelay:navigate', url: target\.href/);
+assert.match(bridge, /token: navigationToken/);
+assert.match(bridge, /__RELAY_NAV_TOKEN__/);
+assert.match(contentServer, /replace\("__RELAY_NAV_TOKEN__", token\)/);
+assert.match(contentServer, /navigationTokenForCookie/);
 assert.doesNotMatch(bridge, /download:|filename:|api\/|cancel/);
 assert.match(gateway, /link-bridge\.js/);
 assert.match(gateway, /callTimeout\(remaining,TimeUnit\.NANOSECONDS\)/);

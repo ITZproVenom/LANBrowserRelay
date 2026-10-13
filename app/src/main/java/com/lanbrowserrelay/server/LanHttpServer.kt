@@ -38,7 +38,7 @@ class LanHttpServer(
         requestLimitPerMinute = DownloadPolicy.MAX_SESSION_REQUESTS_PER_MINUTE
     )
     private val contentPort = port + 1
-    private val contentServer = RelayContentServer(context, bindAddress, contentPort, port)
+    private val contentServer = RelayContentServer(context, bindAddress, contentPort, port, sessions)
     private val deadlines = ConcurrentHashMap<String, TransferDeadline>()
 
     fun startContent() = contentServer.start(10_000, false)

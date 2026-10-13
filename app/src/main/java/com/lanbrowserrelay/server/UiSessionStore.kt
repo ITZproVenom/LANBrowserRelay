@@ -55,6 +55,16 @@ class UiSessionStore(
         return session
     }
 
+    /** Returns the token only for a currently valid browser cookie. */
+    @Synchronized
+    fun navigationTokenForCookie(cookie: String?): String? {
+        val now = clock()
+        prune(now)
+        val session = cookie?.let(sessions::get) ?: return null
+        session.lastSeen = now
+        return session.csrf
+    }
+
     private fun prune(now: Long) {
         val iterator = sessions.entries.iterator()
         while (iterator.hasNext()) {

@@ -36,7 +36,8 @@ const contentServer = await makeServer(async (req, res) => {
   const host = `127.0.0.1:${portOf(contentServer)}`;
   if (req.headers.host !== host) return send(res, 400, 'Bad Host');
   if (req.url === '/link-bridge.js') {
-    return send(res, 200, await readWeb('link-bridge.js'), { 'Content-Type': 'application/javascript; charset=utf-8' });
+    const source = (await readWeb('link-bridge.js')).toString().replace('__RELAY_NAV_TOKEN__', csrf);
+    return send(res, 200, source, { 'Content-Type': 'application/javascript; charset=utf-8' });
   }
   if (req.url.startsWith('/browse?')) {
     const hostile = `<!doctype html><html><head><meta charset="utf-8"><title>Hostile page</title><script src="/link-bridge.js"></script></head><body>
@@ -51,6 +52,7 @@ const contentServer = await makeServer(async (req, res) => {
         try { parent.fetch('/api/status'); window.attackResults.parentApi = 'allowed'; }
         catch (_) { window.attackResults.parentApi = 'blocked'; }
         parent.postMessage({type:'lanbrowserrelay:cancel', id:'victim'}, '*');
+        parent.postMessage({type:'lanbrowserrelay:navigate', url:'https://attacker.example/'}, '*');
         parent.postMessage({type:'lanbrowserrelay:navigate', url:'http://127.0.0.1:${portOf(uiServer)}/api/status', download:true, id:'victim'}, '*');
         fetch('http://127.0.0.1:${portOf(uiServer)}/api/status', {credentials:'include'})
           .then(r => window.attackResults.statusApi = 'HTTP ' + r.status)
@@ -63,7 +65,7 @@ const contentServer = await makeServer(async (req, res) => {
         form.action='http://127.0.0.1:${portOf(uiServer)}/api/download';
         form.innerHTML='<input name="url" value="https://example.com/file.zip">'; document.body.appendChild(form);
         form.submit();
-      </script><p>hostile content</p></body></html>`;
+      </script><p>hostile content</p><a id="legit-link" href="/browse?url=https%3A%2F%2Fexample.net%2Flegit">Legit link</a></body></html>`;
     return send(res, 200, hostile, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': `default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; connect-src 'self' http://127.0.0.1:${portOf(uiServer)}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors http://127.0.0.1:${portOf(uiServer)}`
@@ -139,7 +141,10 @@ try {
   assert.ok(counters.deniedStatus > 0, 'hostile frame API reads should be denied');
   assert.equal(counters.authorizedControl, 0, 'hostile content must not trigger any control action');
   assert.ok(counters.deniedControl > 0, 'hostile state-changing requests should be rejected');
-  console.log('PASS: hostile HTML cannot read/mutate the parent or invoke protected relay controls', JSON.stringify(counters));
+  await frame.locator('#legit-link').click();
+  await page.waitForFunction(() => document.querySelector('#address')?.value === 'https://example.net/legit');
+  assert.equal(await page.locator('#address').inputValue(), 'https://example.net/legit', 'trusted bridge must still navigate on a real link click');
+  console.log('PASS: hostile HTML cannot forge navigation or invoke relay controls; legitimate link clicks still work', JSON.stringify(counters));
 } finally {
   if (browser) await browser.close();
   await new Promise(resolve => uiServer.close(resolve));

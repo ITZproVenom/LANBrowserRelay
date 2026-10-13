@@ -1,4 +1,5 @@
 (() => {
+  const navigationToken = '__RELAY_NAV_TOKEN__';
   // The viewer is sandboxed without allow-same-origin, so its origin is opaque.
   // Only relay rewritten HTTP(S) anchors are forwarded to the outer browser UI.
   const unwrapRelayRoute = raw => {
@@ -22,6 +23,6 @@
     if (!target || !['http:', 'https:'].includes(target.protocol)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    parent.postMessage({ type: 'lanbrowserrelay:navigate', url: target.href }, '*');
+    parent.postMessage({ type: 'lanbrowserrelay:navigate', url: target.href, token: navigationToken }, '*');
   }, true);
 })();

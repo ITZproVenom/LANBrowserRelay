@@ -13,7 +13,8 @@ class RelayContentServer(
     private val context: Context,
     private val bindAddress: String,
     port: Int = 8081,
-    private val uiPort: Int = 8080
+    private val uiPort: Int = 8080,
+    private val sessions: UiSessionStore
 ) : NanoHTTPD(bindAddress, port) {
     private val gateway = HtmlGateway()
     private val contentPort = port
@@ -25,7 +26,7 @@ class RelayContentServer(
         }
         if (session.method != Method.GET) return error(Response.Status.METHOD_NOT_ALLOWED, "GET required")
         return when (session.uri) {
-            "/link-bridge.js" -> asset("web/link-bridge.js", "application/javascript; charset=utf-8")
+            "/link-bridge.js" -> bridgeScript(session)
             "/browse" -> browse(session.parms["url"])
             else -> error(Response.Status.NOT_FOUND, "Not found")
         }.apply {
@@ -62,6 +63,26 @@ class RelayContentServer(
             error(Response.Status.INTERNAL_ERROR, "Page load failed")
         } finally {
             pagePermits.release()
+        }
+    }
+
+    private fun bridgeScript(session: IHTTPSession): Response {
+        val cookie = session.headers.header("cookie")
+            ?.split(';')
+            ?.asSequence()
+            ?.map { it.trim() }
+            ?.firstOrNull { it.startsWith("lbr_session=") }
+            ?.substringAfter('=')
+            ?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
+        val token = sessions.navigationTokenForCookie(cookie)
+            ?: return error(Response.Status.FORBIDDEN, "Session required")
+        return try {
+            val source = context.assets.open("web/link-bridge.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val bytes = source.replace("__RELAY_NAV_TOKEN__", token).toByteArray(Charsets.UTF_8)
+            newFixedLengthResponse(Response.Status.OK, "application/javascript; charset=utf-8",
+                ByteArrayInputStream(bytes), bytes.size.toLong())
+        } catch (_: Exception) {
+            error(Response.Status.NOT_FOUND, "Asset not found")
         }
     }
 
