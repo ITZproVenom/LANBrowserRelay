@@ -7,7 +7,7 @@ LAN Browser Relay is a lightweight Android TV app with a phone-friendly web UI. 
 ## ✨ Highlights
 
 - 🔌 Prefers an active wired Ethernet IPv4 address; refreshes when interfaces or DHCP addresses change.
-- 🧭 Serves the trusted UI/control plane on port `8080` and proxied page content on a separate origin/port (`8081`).
+- 🧭 Prefers UI/content ports `8080/8081`; if either is occupied, it tries alternate adjacent pairs through `8110/8111` and displays the selected LAN URL.
 - 🛡️ Gives each browser session an isolated, in-memory capability and CSRF token; transfer status and cancellation are scoped to the owning session.
 - 📥 Streams downloads through bounded buffers, with a hard **100,000,000-byte** limit and timeouts.
 - 🚫 No login, pairing, or companion app. Other LAN users can open their own isolated session; see [Security & privacy](#-security--privacy).
