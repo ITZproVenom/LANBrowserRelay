@@ -15,6 +15,17 @@ The Android TV app is a headless LANLink engine. It is deliberately not a naviga
 
 The Android service preserves a previously saved relay agent credential when upgrading from the older setup build. If no relay credential exists, local iPhone control still works. In the iPhone app, enter the TV's one-time activation code under Settings. The iPhone exchanges it for a per-TV relay identity and installs that identity through the authenticated local control API. The TV encrypts it with Android Keystore and starts polling automatically. The long-lived relay token is never shown on the TV or stored on the iPhone.
 
+## ChatGPT ADB control
+
+The ChatGPT relay exposes `lan_adb_command` for Android devices that have ADB enabled on the same private subnet.
+
+- Classic ADB: use `transport=tcp`; the bridge defaults to port 5555. The target must already be listening for TCP ADB and must authorize the LANLink host key.
+- Android 11+ Wireless debugging: first run `action=pair`, `transport=tls` with the current six-digit pairing code and pairing port shown by the target. Then run normal actions with `transport=tls` and the separate connection port shown on the Wireless debugging screen.
+- The host key is persistent across agent restarts and encrypted by Android Keystore. Pairing codes are transient and are redacted from the relay command record after execution.
+- ADB is restricted to the bridge's own private subnet. Reboot is available only as an explicit ADB action.
+
+The bridge can only control devices whose ADB service is enabled and authorized. It does not silently enable debugging or bypass the target's authorization prompt.
+
 ## iPhone controller API
 
 The Android foreground service serves an authenticated HTTP API on TCP port 43821, reachable only from private IPv4 clients on the same subnet:
@@ -40,7 +51,10 @@ Every route except the one-time pairing endpoint requires the controller key in 
 - Discovers local IPv4 hosts using common TCP service probes and complete neighbor-table entries only. Incomplete/zero-MAC ARP records are ignored. Every scan records its subnet, probe budget, completed/timed-out hosts, TCP-confirmed count, ARP-only count, before/after ARP counts, per-host evidence and duration.
 - Displays IP, MAC address when available, hostname where available, and open services in the iPhone app.
 - Supports same-subnet probing, constrained local HTTP requests, and Wake-on-LAN.
-- Does not execute arbitrary shell commands or bypass device passwords/pairing; ADB client control is not implemented.
+- ADB host control supports classic authorized TCP ADB (default port 5555) and Android 11+ Wireless debugging over TLS, including one-time six-digit pairing.
+- The bridge creates one persistent 2048-bit ADB identity and encrypts the private/public key material at rest using the existing Android Keystore AES-GCM storage.
+- ADB actions are a fixed allowlist (device info, app listing, navigation, media, volume, power, app launch/stop and reboot). It does not expose arbitrary shell execution or bypass target-side ADB authorization.
+- Wireless debugging pairing codes are accepted for one command and scrubbed from the Supabase command payload after the target responds. The target must explicitly enable Wireless debugging and authorize/pair the LANLink bridge.
 
 ## Security note
 
