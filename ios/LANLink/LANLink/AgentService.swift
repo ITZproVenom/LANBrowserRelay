@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Darwin
 
 struct ActivityEntry: Identifiable {
     let id = UUID()
@@ -31,21 +32,26 @@ final class AgentService: ObservableObject {
         localAddress = LocalNetworkAgent.interfaceInfo()?.address ?? "Not connected"
     }
 
-    func saveSettings() {
+    @discardableResult
+    func saveSettings() -> Bool {
         let endpoint = relayEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: endpoint), url.scheme == "https", url.host != nil,
               url.path.hasSuffix("/functions/v1/lanlink-mcp") else {
             statusMessage = "Use the HTTPS LANLink relay endpoint."
-            return
+            return false
         }
         do {
-            try SecureStore.save(agentToken.trimmingCharacters(in: .whitespacesAndNewlines), account: "agent-token")
+            let token = agentToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !token.isEmpty else { statusMessage = "Enter the iPhone agent token."; return false }
+            try SecureStore.save(token, account: "agent-token")
             UserDefaults.standard.set(endpoint, forKey: "relayEndpoint")
             relayEndpoint = endpoint
             statusMessage = "Settings saved securely."
             addActivity("Settings saved", "Relay endpoint and Keychain token updated.", failed: false)
+            return true
         } catch {
             statusMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -183,6 +189,8 @@ final class AgentService: ObservableObject {
 
         let body = payload["body"] as? String ?? ""
         guard body.utf8.count <= 16_384 else { throw AgentError.bodyTooLarge }
+        let contentType = payload["content_type"] as? String ?? "application/json"
+        guard ["application/json", "text/plain", "application/x-www-form-urlencoded"].contains(contentType) else { throw AgentError.invalidCommand }
         var components = URLComponents()
         components.scheme = scheme
         components.host = ip
@@ -195,7 +203,7 @@ final class AgentService: ObservableObject {
         request.timeoutInterval = 8
         if !body.isEmpty {
             request.httpBody = Data(body.utf8)
-            request.setValue(payload["content_type"] as? String ?? "application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
         let (data, response) = try await URLSession.shared.data(for: request)
         let http = response as? HTTPURLResponse
@@ -221,7 +229,7 @@ final class AgentService: ObservableObject {
         if let error { body["error"] = error }
         if let devices {
             body["devices"] = devices.map { device -> [String: Any] in
-                ["ip": device.ip, "hostname": device.hostname as Any? ?? NSNull(), "services": device.services]
+                ["ip": device.ip, "services": device.services]
             }
         }
         _ = try await relayRequest("agent/report", method: "POST", body: body)
