@@ -555,11 +555,12 @@ public final class BridgeService extends Service {
 
     private static final class Lan {
         final String ip;
+        final String gateway;
         final long network;
         final long broadcast;
         final int prefix;
-        Lan(String ip, long network, long broadcast, int prefix) {
-            this.ip = ip; this.network = network; this.broadcast = broadcast; this.prefix = prefix;
+        Lan(String ip, String gateway, long network, long broadcast, int prefix) {
+            this.ip = ip; this.gateway = gateway; this.network = network; this.broadcast = broadcast; this.prefix = prefix;
         }
         boolean contains(String value) throws Exception {
             long number = ipv4ToLong(InetAddress.getByName(value));
@@ -591,11 +592,32 @@ public final class BridgeService extends Service {
                     long mask = (0xFFFFFFFFL << (32 - prefix)) & 0xFFFFFFFFL;
                     long net = ip & mask;
                     long bcast = net | (~mask & 0xFFFFFFFFL);
-                    return new Lan(ia.getHostAddress(), net, bcast, prefix);
+                    return new Lan(ia.getHostAddress(), defaultGatewayFor(name), net, bcast, prefix);
                 }
             } catch (Exception ignored) {}
         }
         throw new IllegalStateException("Cannot find a private Wi-Fi/Ethernet IPv4 address on this TV.");
+    }
+
+    private String defaultGatewayFor(String interfaceName) {
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/net/route"))) {
+            String line;
+            reader.readLine();
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.trim().split("\\s+");
+                if (parts.length < 4 || !interfaceName.equals(parts[0]) || !"00000000".equalsIgnoreCase(parts[1])) continue;
+                int flags = Integer.parseInt(parts[3], 16);
+                if ((flags & 0x1) == 0) continue;
+                long raw = Long.parseLong(parts[2], 16) & 0xFFFFFFFFL;
+                byte[] address = new byte[] {
+                        (byte) (raw & 0xFF), (byte) ((raw >>> 8) & 0xFF),
+                        (byte) ((raw >>> 16) & 0xFF), (byte) ((raw >>> 24) & 0xFF)
+                };
+                String gateway = InetAddress.getByAddress(address).getHostAddress();
+                if (privateIp(gateway)) return gateway;
+            }
+        } catch (Exception ignored) {}
+        return "";
     }
 
     private static int preferred(String name) {
@@ -638,6 +660,7 @@ public final class BridgeService extends Service {
             startedDetails.put("scan_id", scanId);
             startedDetails.put("subnet", lan.subnet());
             startedDetails.put("bridge_ip", lan.ip);
+            startedDetails.put("gateway_ip", lan.gateway);
             startedDetails.put("hosts_to_scan", tasks.size());
             startedDetails.put("tcp_ports_per_host", PORTS.length);
             startedDetails.put("tcp_attempt_budget", (long) tasks.size() * PORTS.length);
@@ -737,12 +760,37 @@ public final class BridgeService extends Service {
             recordDiagnostic("WARN", "scan.host_found", "Host appeared in ARP after the scan but did not answer the probed TCP ports.", hostDetails);
         }
 
+        // Resolve and fingerprint discovered hosts. Failures do not remove a
+        // host from the raw scan result.
+        for (int i = 0; i < devices.length(); i++) {
+            JSONObject item = devices.optJSONObject(i);
+            if (item == null) continue;
+            String ip = item.optString("ip", "");
+            String hostname = DeviceFingerprint.resolveReverseHostname(ip);
+            DeviceFingerprint.enrich(item);
+            DeviceIdentity.enrich(this, item, lan.gateway, hostname,
+                    hostname.isEmpty() ? "" : "reverse DNS");
+            JSONObject identity = new JSONObject();
+            identity.put("scan_id", scanId);
+            identity.put("ip", ip);
+            identity.put("hostname", item.opt("hostname"));
+            identity.put("vendor", item.opt("device_vendor"));
+            identity.put("device_type", item.optString("device_type", "Unknown network device"));
+            identity.put("identity_confidence", item.optString("identity_confidence", "low"));
+            identity.put("identity_method", item.optString("identity_method", "unknown"));
+            identity.put("vendor_lookup_source", item.optString("vendor_lookup_source", "unknown"));
+            identity.put("identity_evidence", item.optJSONArray("identity_evidence") == null
+                    ? new JSONArray() : item.optJSONArray("identity_evidence"));
+            recordDiagnostic("INFO", "scan.identity", "Device identity analysis completed.", identity);
+        }
+
         final long duration = android.os.SystemClock.elapsedRealtime() - started;
         final int arpOnlyHosts = preexistingArpOnlyHosts + newlyLearnedArpOnlyHosts;
         JSONObject result = new JSONObject();
         result.put("scan_id", scanId);
         result.put("subnet", lan.subnet());
         result.put("bridge_ip", lan.ip);
+        result.put("gateway_ip", lan.gateway);
         result.put("device_count", devices.length());
         result.put("tcp_confirmed_count", tcpConfirmedHosts);
         result.put("arp_only_count", arpOnlyHosts);
@@ -759,6 +807,7 @@ public final class BridgeService extends Service {
         JSONObject summary = new JSONObject();
         summary.put("scan_id", scanId);
         summary.put("subnet", lan.subnet());
+        summary.put("gateway_ip", lan.gateway);
         summary.put("hosts_to_scan", tasks.size());
         summary.put("hosts_completed", completedHosts);
         summary.put("hosts_timed_out", timedOutHosts);
