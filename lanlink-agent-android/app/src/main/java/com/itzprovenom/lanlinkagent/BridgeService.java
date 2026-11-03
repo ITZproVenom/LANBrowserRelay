@@ -445,7 +445,7 @@ public final class BridgeService extends Service {
         ExecutorService scanPool = Executors.newFixedThreadPool(48);
         JSONArray devices = new JSONArray();
         JSONObject self = new JSONObject();
-        self.put("ip", lan.ip); self.put("hostname", "LANLink TV"); self.put("mac", arp.getOrDefault(lan.ip, ""));
+        self.put("ip", lan.ip); self.put("hostname", "LANLink TV"); self.put("mac", (arp.containsKey(lan.ip) ? arp.get(lan.ip) : ""));
         self.put("services", new JSONArray());
         devices.put(self);
         try {
