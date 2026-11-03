@@ -286,8 +286,8 @@ private struct DeviceDetailView: View {
             }
             if !device.identityEvidence.isEmpty {
                 Section("Why LANLink identified it this way") {
-                    ForEach(Array(device.identityEvidence.enumerated()), id: \.offset) { _, evidence in
-                        Label(evidence, systemImage: "checkmark.seal")
+                    ForEach(Array(device.identityEvidence.enumerated()), id: \.offset) { item in
+                        Label(item.element, systemImage: "checkmark.seal")
                             .font(.footnote)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -295,8 +295,8 @@ private struct DeviceDetailView: View {
             }
             if !device.serviceFingerprints.isEmpty {
                 Section("Service fingerprints") {
-                    ForEach(Array(device.serviceFingerprints.enumerated()), id: \.offset) { _, fingerprint in
-                        Text(fingerprint)
+                    ForEach(Array(device.serviceFingerprints.enumerated()), id: \.offset) { item in
+                        Text(item.element)
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
                     }
