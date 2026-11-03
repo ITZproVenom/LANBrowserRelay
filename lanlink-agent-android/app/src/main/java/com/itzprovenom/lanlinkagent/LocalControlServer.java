@@ -150,6 +150,8 @@ final class LocalControlServer {
                 result = service.controlActivity();
             } else if ("POST".equals(method) && "/v1/scan".equals(path)) {
                 result = service.controlScan();
+            } else if ("POST".equals(method) && "/v1/relay/credential".equals(path)) {
+                result = service.controlInstallRelayCredential(body.optString("agent_token", ""));
             } else if ("POST".equals(method) && "/v1/bridge/start".equals(path)) {
                 result = service.controlStartBridge();
             } else if ("POST".equals(method) && "/v1/bridge/stop".equals(path)) {
