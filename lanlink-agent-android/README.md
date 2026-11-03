@@ -39,7 +39,7 @@ The Android foreground service serves an authenticated HTTP API on TCP port 4382
 - `POST /v1/relay/credential` - install a newly enrolled relay identity (controller Bearer token required)
 - `POST /v1/bridge/start` - start ChatGPT relay polling
 - `POST /v1/bridge/stop` - pause ChatGPT relay polling but keep the controller API running
-- `POST /v1/command` - execute a supported `probe`, constrained `http`, or `wol` action
+- `POST /v1/command` - execute a supported `probe`, constrained `http`, `wol`, or authenticated `adb` action
 
 Every route except the one-time pairing endpoint requires the controller key in an HTTP Bearer header. Requests from outside the TV's private subnet are rejected; headers and JSON bodies are size-bounded; redirects are not followed. Do not expose TCP 43821 to the public internet.
 
