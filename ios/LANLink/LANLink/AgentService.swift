@@ -541,7 +541,7 @@ final class AgentService: ObservableObject {
                 message: item["message"] as? String ?? "",
                 details: details
             )
-        }.suffix(200).reversed()
+        }.suffix(200).reversed().map { $0 }
     }
 
     private func request(
