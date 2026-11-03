@@ -20,6 +20,17 @@
   <string>8</string>
   <key>LSRequiresIPhoneOS</key>
   <true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.itzprovenom.lanlink</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>lanlink</string>
+      </array>
+    </dict>
+  </array>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>
