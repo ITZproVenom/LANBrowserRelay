@@ -55,12 +55,12 @@ final class AgentService: ObservableObject {
     private let controllerToken: String
 
     init() {
-        let savedToken = SecureStore.read(account: "android-controller-token")
+        let savedToken = SecureStore.read(account: "android-controller-token-v2")
         if let savedToken, savedToken.count >= 40 {
             controllerToken = savedToken
         } else {
             controllerToken = Self.makeControllerToken()
-            try? SecureStore.save(controllerToken, account: "android-controller-token")
+            try? SecureStore.save(controllerToken, account: "android-controller-token-v2")
         }
 
         let configuration = URLSessionConfiguration.ephemeral
