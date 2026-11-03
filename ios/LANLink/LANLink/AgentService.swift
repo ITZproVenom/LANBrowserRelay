@@ -95,7 +95,7 @@ final class AgentService: ObservableObject {
                         self.statusMessage = "Looking for an Android LANLink agent…"
                     }
                 case .failed(let error):
-                    self.statusMessage = "Local discovery failed: \\(error.localizedDescription)"
+                    self.statusMessage = "Local discovery failed: \(error.localizedDescription)"
                     self.browser = nil
                 case .cancelled:
                     self.browser = nil
@@ -134,7 +134,7 @@ final class AgentService: ObservableObject {
     private func resolveAndConnect(_ endpoint: NWEndpoint, displayName: String) {
         guard !isConnecting else { return }
         isConnecting = true
-        statusMessage = "Found \\(displayName). Connecting…"
+        statusMessage = "Found \(displayName). Connecting…"
 
         let connection = NWConnection(to: endpoint, using: .tcp)
         resolveConnections.append(connection)
@@ -177,7 +177,7 @@ final class AgentService: ObservableObject {
         portText = String(port)
         UserDefaults.standard.set(host, forKey: "androidHost")
         UserDefaults.standard.set(portText, forKey: "androidPort")
-        statusMessage = "Securely enrolling with \\(displayName)…"
+        statusMessage = "Securely enrolling with \(displayName)…"
 
         do {
             // First contact creates a per-install controller key in Keychain.
@@ -196,14 +196,14 @@ final class AgentService: ObservableObject {
             lastRelayContact = last > 0 ? Date(timeIntervalSince1970: last / 1000) : nil
 
             statusMessage = isRunning
-                ? "Connected to \\(displayName). Android relay is running."
-                : "Connected to \\(displayName). Android is ready; ChatGPT relay is not active."
+                ? "Connected to \(displayName). Android relay is running."
+                : "Connected to \(displayName). Android is ready; ChatGPT relay is not active."
             stopDiscovery()
             await refreshPanels()
-            addLocalActivity("Android connected", "Automatically discovered \\(displayName) at \\(host):\\(port).", failed: false)
+            addLocalActivity("Android connected", "Automatically discovered \(displayName) at \(host):\(port).", failed: false)
         } catch {
             isConnected = false
-            statusMessage = "Found \\(displayName), but connection failed: \\(error.localizedDescription)"
+            statusMessage = "Found \(displayName), but connection failed: \(error.localizedDescription)"
             // Keep discovery alive so a reachable agent can be retried.
         }
     }
@@ -242,7 +242,7 @@ final class AgentService: ObservableObject {
             await refreshPanels()
         } catch {
             isConnected = false
-            statusMessage = "Android connection lost: \\(error.localizedDescription)"
+            statusMessage = "Android connection lost: \(error.localizedDescription)"
             startDiscovery()
         }
     }
@@ -256,7 +256,7 @@ final class AgentService: ObservableObject {
                 addLocalActivity("Relay started", "Android agent is polling the LANLink relay.", failed: false)
                 await refresh()
             } catch {
-                statusMessage = "Could not start Android relay: \\(error.localizedDescription)"
+                statusMessage = "Could not start Android relay: \(error.localizedDescription)"
             }
         }
     }
@@ -270,7 +270,7 @@ final class AgentService: ObservableObject {
                 addLocalActivity("Relay paused", "Android stays available for iPhone control.", failed: false)
                 await refreshPanels()
             } catch {
-                statusMessage = "Could not pause Android relay: \\(error.localizedDescription)"
+                statusMessage = "Could not pause Android relay: \(error.localizedDescription)"
             }
         }
     }
@@ -289,11 +289,11 @@ final class AgentService: ObservableObject {
             let result = try await request("/v1/scan", method: "POST", body: [:])
             devices = Self.parseDevices(result["devices"] as? [[String: Any]] ?? [])
             subnet = result["subnet"] as? String ?? subnet
-            statusMessage = "Android discovered \\(devices.count) device(s) on \\(subnet)."
-            addLocalActivity("LAN scan complete", "\\(devices.count) devices reported by Android.", failed: false)
+            statusMessage = "Android discovered \(devices.count) device(s) on \(subnet)."
+            addLocalActivity("LAN scan complete", "\(devices.count) devices reported by Android.", failed: false)
             await refreshPanels()
         } catch {
-            statusMessage = "Android scan failed: \\(error.localizedDescription)"
+            statusMessage = "Android scan failed: \(error.localizedDescription)"
             addLocalActivity("LAN scan failed", error.localizedDescription, failed: true)
         }
     }
@@ -331,12 +331,12 @@ final class AgentService: ObservableObject {
                     "kind": kind,
                     "payload": payload
                 ])
-                statusMessage = "\\(kind.uppercased()) completed on Android."
-                addLocalActivity("\\(kind.uppercased()) completed", resultSummary(result), failed: false)
+                statusMessage = "\(kind.uppercased()) completed on Android."
+                addLocalActivity("\(kind.uppercased()) completed", resultSummary(result), failed: false)
                 await refreshPanels()
             } catch {
-                statusMessage = "\\(kind.uppercased()) failed: \\(error.localizedDescription)"
-                addLocalActivity("\\(kind.uppercased()) failed", error.localizedDescription, failed: true)
+                statusMessage = "\(kind.uppercased()) failed: \(error.localizedDescription)"
+                addLocalActivity("\(kind.uppercased()) failed", error.localizedDescription, failed: true)
             }
         }
     }
@@ -360,7 +360,7 @@ final class AgentService: ObservableObject {
                 )
             }
         } catch {
-            statusMessage = "Android connected, but a dashboard panel failed: \\(error.localizedDescription)"
+            statusMessage = "Android connected, but a dashboard panel failed: \(error.localizedDescription)"
         }
     }
 
@@ -372,7 +372,7 @@ final class AgentService: ObservableObject {
     ) async throws -> [String: Any] {
         guard !androidHost.isEmpty,
               let port = Int(portText),
-              var components = URLComponents(string: "http://\\(androidHost):\\(port)"),
+              var components = URLComponents(string: "http://\(androidHost):\(port)"),
               components.scheme == "http",
               Self.isPrivateIPv4(androidHost) else {
             throw ControllerError.invalidAddress
@@ -383,7 +383,7 @@ final class AgentService: ObservableObject {
         request.httpMethod = method
         request.timeoutInterval = 32
         if authenticated {
-            request.setValue("Bearer \\(controllerToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("Bearer \(controllerToken)", forHTTPHeaderField: "Authorization")
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
@@ -394,7 +394,7 @@ final class AgentService: ObservableObject {
         guard let http = response as? HTTPURLResponse else { throw ControllerError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let detail = String(data: Data(data.prefix(700)), encoding: .utf8)
-                ?? "Android control API returned HTTP \\(http.statusCode)."
+                ?? "Android control API returned HTTP \(http.statusCode)."
             throw ControllerError.server(detail)
         }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -406,9 +406,9 @@ final class AgentService: ObservableObject {
     }
 
     private func resultSummary(_ result: [String: Any]) -> String {
-        if let status = result["status"] { return "HTTP status \\(status)" }
-        if let mac = result["mac"] as? String { return "MAC \\(mac)" }
-        if let ip = result["ip"] as? String { return "Device \\(ip)" }
+        if let status = result["status"] { return "HTTP status \(status)" }
+        if let mac = result["mac"] as? String { return "MAC \(mac)" }
+        if let ip = result["ip"] as? String { return "Device \(ip)" }
         return "Android returned a result."
     }
 
@@ -421,7 +421,7 @@ final class AgentService: ObservableObject {
                 if let object = value as? [String: Any] {
                     let name = object["service"] as? String ?? "service"
                     let port = object["port"] as? Int
-                    return port.map { "\\(name):\\($0)" } ?? name
+                    return port.map { "\(name):\($0)" } ?? name
                 }
                 return nil
             }
