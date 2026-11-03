@@ -26,6 +26,19 @@ The ChatGPT relay exposes `lan_adb_command` for Android devices that have ADB en
 
 The bridge can only control devices whose ADB service is enabled and authorized. It does not silently enable debugging or bypass the target's authorization prompt.
 
+## ChatGPT terminal and arbitrary ADB shell
+
+The Android agent now exposes `lan_terminal` through the Supabase MCP relay:
+
+- `operation=start` creates a persistent `/system/bin/sh -i` session on the Android TV.
+- `operation=exec` runs a command in that session and returns bounded output, exit status, completion/timeout state and a cursor.
+- `operation=write` sends interactive stdin; `operation=read` retrieves later output by cursor; `operation=close` destroys the session.
+- The agent permits at most three concurrent sessions, retains at most 64 KiB of output per session, limits one input/command to 16 KiB, caps a command wait at 60 seconds, and expires idle sessions after ten minutes.
+- Commands execute as the LANLink Android app UID, not root. The working directory is a private per-session app directory. Available commands are the Android TV's existing system utilities; this is not an Alpine Linux container and does not bundle Python, Node.js, apt or a general Linux package manager.
+- Use `lan_command_status` with the returned command ID to retrieve the result of each queued terminal operation. Sessions are held in agent memory and end when the service process restarts.
+
+`lan_adb_command` also accepts `action=shell` and a `command` string up to 16 KiB. This runs an arbitrary command through the target device's authorized ADB shell, with a 60-second execution deadline and bounded stdout/stderr. It does not bypass Android's ADB authorization or target permissions. Shell commands can alter the target device, so use explicit target IPs and inspect the command before sending it.
+
 ## iPhone controller API
 
 The Android foreground service serves an authenticated HTTP API on TCP port 43821, reachable only from private IPv4 clients on the same subnet:
@@ -39,7 +52,7 @@ The Android foreground service serves an authenticated HTTP API on TCP port 4382
 - `POST /v1/relay/credential` - install a newly enrolled relay identity (controller Bearer token required)
 - `POST /v1/bridge/start` - start ChatGPT relay polling
 - `POST /v1/bridge/stop` - pause ChatGPT relay polling but keep the controller API running
-- `POST /v1/command` - execute a supported `probe`, constrained `http`, `wol`, or authenticated `adb` action
+- `POST /v1/command` - execute a supported `probe`, constrained `http`, `wol`, authenticated `adb`, or `terminal` operation
 
 Every route except the one-time pairing endpoint requires the controller key in an HTTP Bearer header. Requests from outside the TV's private subnet are rejected; headers and JSON bodies are size-bounded; redirects are not followed. Do not expose TCP 43821 to the public internet.
 
@@ -53,8 +66,9 @@ Every route except the one-time pairing endpoint requires the controller key in 
 - Supports same-subnet probing, constrained local HTTP requests, and Wake-on-LAN.
 - ADB host control supports classic authorized TCP ADB (default port 5555) and Android 11+ Wireless debugging over TLS, including one-time six-digit pairing.
 - The bridge creates one persistent 2048-bit ADB identity and encrypts the private/public key material at rest using the existing Android Keystore AES-GCM storage.
-- ADB actions are a fixed allowlist (device info, app listing, navigation, media, volume, power, app launch/stop and reboot). It does not expose arbitrary shell execution or bypass target-side ADB authorization.
+- ADB supports both convenience actions and arbitrary commands through the target's explicitly authorized shell; shell commands are length-bounded and time-limited.
 - Wireless debugging pairing codes are accepted for one command and scrubbed from the Supabase command payload after the target responds. The target must explicitly enable Wireless debugging and authorize/pair the LANLink bridge.
+- Terminal commands and stdin are scrubbed from the Supabase command payload after execution. Terminal output is returned as the command result; do not print credentials or other secrets into the terminal output.
 
 ## Security note
 

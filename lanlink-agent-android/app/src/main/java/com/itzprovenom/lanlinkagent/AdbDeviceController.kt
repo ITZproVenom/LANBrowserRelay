@@ -8,6 +8,7 @@ import io.github.rhythmcache.adb.AdbClient
 import io.github.rhythmcache.adb.AdbKeyProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -81,7 +82,7 @@ internal object AdbDeviceController {
         }
 
         return client.use { connected ->
-            val shell = connected.shell(shellCommand)
+            val shell = withTimeout(60_000L) { connected.shell(shellCommand) }
             val stdout = shell.stdoutText.take(MAX_OUTPUT_CHARS)
             val stderr = shell.stderrText.take(MAX_OUTPUT_CHARS)
             JSONObject()
@@ -131,6 +132,13 @@ internal object AdbDeviceController {
                 "am force-stop $packageName"
             }
             "reboot" -> "reboot"
+            "shell" -> {
+                val command = payload.optString("command", "")
+                if (command.isBlank() || command.length > 16_384 || command.indexOf('\u0000') >= 0) {
+                    throw IllegalArgumentException("ADB shell command must contain 1 to 16,384 characters and no NUL bytes.")
+                }
+                command
+            }
             else -> null
         }
     }

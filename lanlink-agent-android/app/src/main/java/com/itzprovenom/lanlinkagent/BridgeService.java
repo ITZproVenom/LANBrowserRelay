@@ -270,6 +270,7 @@ public final class BridgeService extends Service {
         capabilities.put("http");
         capabilities.put("wake-on-lan");
         capabilities.put("adb-control");
+        capabilities.put("terminal-exec");
         heartbeat.put("capabilities", capabilities);
         request("/agent/heartbeat", "POST", heartbeat);
         lastAgentMetadataHeartbeat = now;
@@ -334,6 +335,8 @@ public final class BridgeService extends Service {
                 result = wakeOnLan(payload);
             } else if ("adb".equals(kind)) {
                 result = AdbDeviceController.execute(this, payload);
+            } else if ("terminal".equals(kind)) {
+                result = TerminalSessionManager.execute(this, payload);
             } else {
                 throw new IllegalArgumentException("Unsupported command kind: " + kind);
             }
@@ -542,6 +545,8 @@ public final class BridgeService extends Service {
             result = wakeOnLan(payload);
         } else if ("adb".equals(kind)) {
             result = AdbDeviceController.execute(this, payload);
+        } else if ("terminal".equals(kind)) {
+            result = TerminalSessionManager.execute(this, payload);
         } else {
             throw new IllegalArgumentException("Unsupported command kind: " + kind);
         }
