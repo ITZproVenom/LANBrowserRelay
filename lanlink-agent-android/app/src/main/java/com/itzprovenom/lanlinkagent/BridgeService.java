@@ -315,12 +315,7 @@ public final class BridgeService extends Service {
             event.put("failed", failed);
             event.put("timestamp", System.currentTimeMillis());
             recentActivity.put(event);
-            while (recentActivity.length() > 100) {
-                JSONArray trimmed = new JSONArray();
-                for (int i = 1; i < recentActivity.length(); i++) trimmed.put(recentActivity.get(i));
-                recentActivity.replace(0, trimmed);
-                break;
-            }
+            while (recentActivity.length() > 100) recentActivity.remove(0);
         } catch (Exception ignored) {}
     }
 
