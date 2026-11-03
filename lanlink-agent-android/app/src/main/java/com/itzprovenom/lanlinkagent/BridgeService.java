@@ -73,11 +73,18 @@ public final class BridgeService extends Service {
     private volatile String lastRelayError = "";
     private volatile JSONObject lastDiscoveryResult = new JSONObject();
     private final JSONArray recentActivity = new JSONArray();
+    private static final String DIAGNOSTICS_PREFS = "lanlink_diagnostics";
+    private static final String DIAGNOSTICS_ENTRIES = "entries";
+    private static final int MAX_DIAGNOSTIC_LOGS = 500;
+    private final Object diagnosticLock = new Object();
+    private volatile long lastDiagnosticHeartbeat = 0L;
+    private volatile String lastDiagnosticRelayError = "";
 
     @Override public void onCreate() {
         super.onCreate();
         createChannel();
         startForeground(NOTIFICATION_ID, notification("Starting LANLink local controller…"));
+        recordDiagnostic("INFO", "service.created", "LANLink TV agent service created.", new JSONObject());
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -92,6 +99,12 @@ public final class BridgeService extends Service {
         }
 
         token = SecureStore.read(this);
+        JSONObject startupDetails = new JSONObject();
+        try {
+            startupDetails.put("relay_configured", !token.isEmpty());
+            startupDetails.put("api_port", LocalControlServer.PORT);
+        } catch (Exception ignored) {}
+        recordDiagnostic("INFO", "service.started", "LANLink local agent startup requested.", startupDetails);
 
         // Migrate away from the old manually displayed TV pairing secret once.
         // The iPhone now generates its own Keychain-backed key and enrolls over
@@ -189,12 +202,14 @@ public final class BridgeService extends Service {
         if (token.isEmpty()) token = SecureStore.read(this);
         if (token.isEmpty()) {
             lastRelayError = "Missing relay agent token.";
+            recordDiagnostic("WARN", "relay.start_blocked", "Relay start requested but no agent credential is configured.", new JSONObject());
             return;
         }
         if (!running.compareAndSet(false, true)) return;
         worker = Executors.newSingleThreadExecutor();
         worker.execute(this::loop);
         addActivity("Relay started", "Android TV agent is polling the LANLink relay.", false);
+        recordDiagnostic("INFO", "relay.started", "Relay polling worker started.", new JSONObject());
         updateNotification("Bridge active • controller port " + LocalControlServer.PORT);
     }
 
@@ -205,6 +220,7 @@ public final class BridgeService extends Service {
             worker = null;
         }
         addActivity("Relay stopped", "Remote controller remains available on the LAN.", false);
+        recordDiagnostic("INFO", "relay.stopped", "Relay polling worker stopped; local controller remains available.", new JSONObject());
         updateNotification("Controller ready • relay paused");
     }
 
@@ -227,6 +243,17 @@ public final class BridgeService extends Service {
                 JSONObject response = request("/agent/poll", "GET", null);
                 lastRelayContact = System.currentTimeMillis();
                 lastRelayError = "";
+                long now = System.currentTimeMillis();
+                if (now - lastDiagnosticHeartbeat >= 60_000L) {
+                    lastDiagnosticHeartbeat = now;
+                    JSONObject heartbeat = new JSONObject();
+                    try { heartbeat.put("agent_poll", "success"); heartbeat.put("queued_commands", response.optJSONArray("commands") == null ? 0 : response.optJSONArray("commands").length()); } catch (Exception ignored) {}
+                    recordDiagnostic("INFO", "relay.heartbeat", "Relay poll succeeded.", heartbeat);
+                }
+                if (!lastDiagnosticRelayError.isEmpty()) {
+                    recordDiagnostic("INFO", "relay.recovered", "Relay polling recovered after an error.", new JSONObject());
+                    lastDiagnosticRelayError = "";
+                }
                 JSONArray commands = response.optJSONArray("commands");
                 if (commands != null) {
                     for (int i = 0; i < commands.length() && running.get(); i++) {
@@ -236,6 +263,12 @@ public final class BridgeService extends Service {
                 }
             } catch (Exception e) {
                 lastRelayError = safe(e.getMessage());
+                if (!lastRelayError.equals(lastDiagnosticRelayError)) {
+                    JSONObject failure = new JSONObject();
+                    try { failure.put("error", lastRelayError); } catch (Exception ignored) {}
+                    recordDiagnostic("ERROR", "relay.poll_failed", "Relay poll failed.", failure);
+                    lastDiagnosticRelayError = lastRelayError;
+                }
                 updateNotification("Relay unavailable: " + lastRelayError);
             }
             try { Thread.sleep(3000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
@@ -327,6 +360,50 @@ public final class BridgeService extends Service {
         try { result.put("events", new JSONArray(recentActivity.toString())); }
         catch (Exception ignored) { try { result.put("events", new JSONArray()); } catch (Exception ignoredAgain) {} }
         return result;
+    }
+
+    JSONObject controlLogs() {
+        JSONObject result = new JSONObject();
+        try {
+            android.content.SharedPreferences prefs = getSharedPreferences(DIAGNOSTICS_PREFS, MODE_PRIVATE);
+            JSONArray entries = new JSONArray(prefs.getString(DIAGNOSTICS_ENTRIES, "[]"));
+            result.put("logs", entries);
+            result.put("count", entries.length());
+            result.put("limit", MAX_DIAGNOSTIC_LOGS);
+        } catch (Exception error) {
+            try { result.put("logs", new JSONArray()); result.put("error", safe(error.getMessage())); }
+            catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    private void recordDiagnostic(String level, String event, String message, JSONObject details) {
+        try {
+            JSONObject entry = new JSONObject();
+            entry.put("id", java.util.UUID.randomUUID().toString());
+            entry.put("timestamp", System.currentTimeMillis());
+            entry.put("level", level);
+            entry.put("event", event);
+            entry.put("message", safe(message));
+            entry.put("details", details == null ? new JSONObject() : new JSONObject(details.toString()));
+
+            synchronized (diagnosticLock) {
+                android.content.SharedPreferences prefs = getSharedPreferences(DIAGNOSTICS_PREFS, MODE_PRIVATE);
+                JSONArray current = new JSONArray(prefs.getString(DIAGNOSTICS_ENTRIES, "[]"));
+                current.put(entry);
+                JSONArray trimmed = new JSONArray();
+                int first = Math.max(0, current.length() - MAX_DIAGNOSTIC_LOGS);
+                for (int i = first; i < current.length(); i++) trimmed.put(current.getJSONObject(i));
+                prefs.edit().putString(DIAGNOSTICS_ENTRIES, trimmed.toString()).apply();
+            }
+
+            int priority = "ERROR".equals(level) ? android.util.Log.ERROR
+                    : "WARN".equals(level) ? android.util.Log.WARN
+                    : "DEBUG".equals(level) ? android.util.Log.DEBUG : android.util.Log.INFO;
+            android.util.Log.println(priority, "LANLink", event + ": " + message);
+        } catch (Exception error) {
+            android.util.Log.e("LANLink", "Could not persist diagnostic log", error);
+        }
     }
 
     JSONObject controlScan() throws Exception {
@@ -532,73 +609,158 @@ public final class BridgeService extends Service {
     }
 
     private JSONObject discover() throws Exception {
+        final long started = android.os.SystemClock.elapsedRealtime();
+        final String scanId = java.util.UUID.randomUUID().toString();
         Lan lan = localLan();
-        Map<String, String> arp = arpTable();
+        Map<String, String> arpBefore = arpTable();
         List<Callable<JSONObject>> tasks = new ArrayList<>();
         for (long value = lan.network + 1; value < lan.broadcast; value++) {
             String ip = longToIp(value);
-            if (ip.equals(lan.ip)) continue;
-            tasks.add(() -> inspectHost(ip, arp.get(ip)));
+            if (!ip.equals(lan.ip)) tasks.add(() -> inspectHost(ip, arpBefore.get(ip)));
         }
+
+        JSONObject startedDetails = new JSONObject();
+        try {
+            startedDetails.put("scan_id", scanId);
+            startedDetails.put("subnet", lan.subnet());
+            startedDetails.put("bridge_ip", lan.ip);
+            startedDetails.put("hosts_to_scan", tasks.size());
+            startedDetails.put("tcp_ports_per_host", PORTS.length);
+            startedDetails.put("tcp_attempt_budget", (long) tasks.size() * PORTS.length);
+            startedDetails.put("parallel_workers", 48);
+            startedDetails.put("host_timeout_ms", 130);
+            startedDetails.put("scan_timeout_ms", 25000);
+            startedDetails.put("arp_entries_before", arpBefore.size());
+        } catch (Exception ignored) {}
+        recordDiagnostic("INFO", "scan.started", "LAN scan started.", startedDetails);
+
         ExecutorService scanPool = Executors.newFixedThreadPool(48);
         JSONArray devices = new JSONArray();
+        java.util.HashSet<String> foundIps = new java.util.HashSet<>();
         JSONObject self = new JSONObject();
-        self.put("ip", lan.ip); self.put("hostname", "LANLink TV"); self.put("mac", (arp.containsKey(lan.ip) ? arp.get(lan.ip) : ""));
+        self.put("ip", lan.ip);
+        self.put("hostname", "LANLink TV");
+        self.put("mac", arpBefore.containsKey(lan.ip) ? arpBefore.get(lan.ip) : JSONObject.NULL);
         self.put("services", new JSONArray());
+        self.put("discovery_source", "agent");
+        self.put("tcp_confirmed", true);
         devices.put(self);
+        foundIps.add(lan.ip);
+
+        int completedHosts = 0;
+        int timedOutHosts = 0;
+        int tcpConfirmedHosts = 0;
+        int preexistingArpOnlyHosts = 0;
+        int newlyLearnedArpOnlyHosts = 0;
         try {
             List<Future<JSONObject>> results = scanPool.invokeAll(tasks, 25, TimeUnit.SECONDS);
             for (Future<JSONObject> future : results) {
-                if (future.isCancelled()) continue;
+                if (future.isCancelled()) {
+                    timedOutHosts++;
+                    continue;
+                }
+                completedHosts++;
                 JSONObject item = future.get();
-                if (item != null) devices.put(item);
+                if (item == null) continue;
+                String ip = item.optString("ip", "");
+                if (ip.isEmpty() || !foundIps.add(ip)) continue;
+                JSONArray services = item.optJSONArray("services");
+                boolean tcpConfirmed = services != null && services.length() > 0;
+                item.put("discovery_source", tcpConfirmed ? "tcp_open_port" : "arp_cache_preexisting");
+                item.put("tcp_confirmed", tcpConfirmed);
+                if (tcpConfirmed) tcpConfirmedHosts++;
+                else preexistingArpOnlyHosts++;
+                devices.put(item);
+                JSONObject hostDetails = new JSONObject();
+                hostDetails.put("scan_id", scanId);
+                hostDetails.put("ip", ip);
+                hostDetails.put("discovery_source", item.optString("discovery_source"));
+                hostDetails.put("tcp_confirmed", tcpConfirmed);
+                hostDetails.put("open_services", services == null ? new JSONArray() : services);
+                hostDetails.put("mac", item.opt("mac"));
+                recordDiagnostic(tcpConfirmed ? "INFO" : "WARN", "scan.host_found",
+                        tcpConfirmed ? "Host answered on one or more TCP ports." : "Host appeared only in the pre-existing ARP cache; not confirmed active by TCP.",
+                        hostDetails);
             }
         } finally {
             scanPool.shutdownNow();
         }
 
-        // TCP probes above trigger neighbor resolution. Re-read the ARP cache
-        // afterwards so hosts with no listening ports are still included when
-        // the kernel learned their MAC address during this scan.
+        // Re-read the neighbor table after probes. Only complete ARP entries with
+        // non-zero hardware addresses are accepted by arpTable().
         Map<String, String> arpAfterScan = arpTable();
         for (Map.Entry<String,String> entry : arpAfterScan.entrySet()) {
-            if (!lan.contains(entry.getKey())) continue;
-            boolean exists = false;
-            for (int i=0; i<devices.length(); i++) if (entry.getKey().equals(devices.optJSONObject(i).optString("ip"))) { exists=true; break; }
-            if (!exists) {
-                JSONObject item = new JSONObject();
-                item.put("ip", entry.getKey()); item.put("mac", entry.getValue());
-                item.put("hostname", JSONObject.NULL); item.put("services", new JSONArray());
-                devices.put(item);
+            String ip = entry.getKey();
+            if (!lan.contains(ip)) continue;
+            if (foundIps.contains(ip)) {
+                for (int i = 0; i < devices.length(); i++) {
+                    JSONObject existing = devices.optJSONObject(i);
+                    if (existing != null && ip.equals(existing.optString("ip"))
+                            && (existing.isNull("mac") || existing.optString("mac").isEmpty())) {
+                        existing.put("mac", entry.getValue());
+                        break;
+                    }
+                }
+                continue;
             }
+            JSONObject item = new JSONObject();
+            item.put("ip", ip);
+            item.put("mac", entry.getValue());
+            item.put("hostname", JSONObject.NULL);
+            item.put("services", new JSONArray());
+            item.put("discovery_source", "arp_learned_during_scan");
+            item.put("tcp_confirmed", false);
+            devices.put(item);
+            foundIps.add(ip);
+            newlyLearnedArpOnlyHosts++;
+
+            JSONObject hostDetails = new JSONObject();
+            hostDetails.put("scan_id", scanId);
+            hostDetails.put("ip", ip);
+            hostDetails.put("mac", entry.getValue());
+            hostDetails.put("discovery_source", "arp_learned_during_scan");
+            hostDetails.put("tcp_confirmed", false);
+            recordDiagnostic("WARN", "scan.host_found", "Host appeared in ARP after the scan but did not answer the probed TCP ports.", hostDetails);
         }
+
+        final long duration = android.os.SystemClock.elapsedRealtime() - started;
+        final int arpOnlyHosts = preexistingArpOnlyHosts + newlyLearnedArpOnlyHosts;
         JSONObject result = new JSONObject();
+        result.put("scan_id", scanId);
         result.put("subnet", lan.subnet());
         result.put("bridge_ip", lan.ip);
         result.put("device_count", devices.length());
+        result.put("tcp_confirmed_count", tcpConfirmedHosts + 1);
+        result.put("arp_only_count", arpOnlyHosts);
+        result.put("arp_preexisting_count", preexistingArpOnlyHosts);
+        result.put("arp_new_count", newlyLearnedArpOnlyHosts);
+        result.put("hosts_to_scan", tasks.size());
+        result.put("hosts_completed", completedHosts);
+        result.put("hosts_timed_out", timedOutHosts);
+        result.put("arp_entries_before", arpBefore.size());
+        result.put("arp_entries_after", arpAfterScan.size());
+        result.put("duration_ms", duration);
         result.put("devices", devices);
-        return result;
-    }
 
-    private JSONObject inspectHost(String ip, String mac) {
-        try {
-            JSONArray services = new JSONArray();
-            for (int i=0; i<PORTS.length; i++) {
-                try (Socket socket = new Socket()) {
-                    socket.connect(new java.net.InetSocketAddress(ip, PORTS[i]), 130);
-                    JSONObject service = new JSONObject();
-                    service.put("port", PORTS[i]); service.put("service", NAMES[i]);
-                    services.put(service);
-                } catch (Exception ignored) {}
-            }
-            if (services.length() == 0 && mac == null) return null;
-            JSONObject item = new JSONObject();
-            item.put("ip", ip);
-            item.put("mac", mac == null ? JSONObject.NULL : mac);
-            item.put("hostname", JSONObject.NULL);
-            item.put("services", services);
-            return item;
-        } catch (Exception ignored) { return null; }
+        JSONObject summary = new JSONObject();
+        summary.put("scan_id", scanId);
+        summary.put("subnet", lan.subnet());
+        summary.put("hosts_to_scan", tasks.size());
+        summary.put("hosts_completed", completedHosts);
+        summary.put("hosts_timed_out", timedOutHosts);
+        summary.put("device_count_total", devices.length());
+        summary.put("tcp_confirmed_count_including_tv", tcpConfirmedHosts + 1);
+        summary.put("arp_only_count", arpOnlyHosts);
+        summary.put("arp_preexisting_count", preexistingArpOnlyHosts);
+        summary.put("arp_new_count", newlyLearnedArpOnlyHosts);
+        summary.put("arp_entries_before", arpBefore.size());
+        summary.put("arp_entries_after", arpAfterScan.size());
+        summary.put("duration_ms", duration);
+        recordDiagnostic("INFO", "scan.completed", "LAN scan completed.", summary);
+        addActivity("LAN scan complete",
+                devices.length() + " entries: " + (tcpConfirmedHosts + 1) + " TCP-confirmed, "
+                        + arpOnlyHosts + " ARP-only; " + duration + " ms.", false);
+        return result;
     }
 
     private JSONObject probe(String value) throws Exception {
@@ -616,9 +778,26 @@ public final class BridgeService extends Service {
             reader.readLine();
             while ((line = reader.readLine()) != null) {
                 String[] parts = line.trim().split("\\s+");
-                if (parts.length >= 4 && parts[3].matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")) result.put(parts[0], parts[3].toLowerCase());
+                if (parts.length < 6) continue;
+                int flags;
+                try {
+                    String rawFlags = parts[2].toLowerCase();
+                    flags = rawFlags.startsWith("0x") ? Integer.parseInt(rawFlags.substring(2), 16) : Integer.parseInt(rawFlags);
+                } catch (Exception ignored) { continue; }
+                String mac = parts[3].toLowerCase();
+                // Linux ARP flags bit 0x2 means a complete neighbor entry.
+                // Ignore incomplete entries and zero MACs, which otherwise look
+                // like phantom LAN hosts in device counts.
+                if ((flags & 0x2) == 0
+                        || !mac.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")
+                        || "00:00:00:00:00:00".equals(mac)) continue;
+                result.put(parts[0], mac);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            JSONObject details = new JSONObject();
+            try { details.put("error", safe(error.getMessage())); } catch (Exception ignored) {}
+            recordDiagnostic("WARN", "scan.arp_read_failed", "Could not read the Android neighbor table.", details);
+        }
         return result;
     }
 
