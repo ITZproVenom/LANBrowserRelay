@@ -92,6 +92,7 @@ public final class BridgeService extends Service {
     private static final int MAX_DIAGNOSTIC_LOGS = 500;
     private final Object diagnosticLock = new Object();
     private volatile long lastDiagnosticHeartbeat = 0L;
+    private volatile long lastAgentMetadataHeartbeat = 0L;
     private volatile String lastDiagnosticRelayError = "";
 
     @Override public void onCreate() {
