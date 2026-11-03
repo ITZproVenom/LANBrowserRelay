@@ -332,7 +332,7 @@ public final class BridgeService extends Service {
             } else if ("wol".equals(kind)) {
                 result = wakeOnLan(payload);
             } else if ("adb".equals(kind)) {
-                throw new IllegalStateException("ADB control is not available in the Android TV bridge build.");
+                result = AdbDeviceController.execute(this, payload);
             } else {
                 throw new IllegalArgumentException("Unsupported command kind: " + kind);
             }
@@ -348,6 +348,14 @@ public final class BridgeService extends Service {
                 request("/agent/report", "POST", report);
             } catch (Exception ignored) {}
             updateNotification("Task failed: " + safe(e.getMessage()));
+        }
+    }
+
+    boolean isSameLocalSubnet(String target) {
+        try {
+            return privateIp(target) && localLan().contains(target);
+        } catch (Exception ignored) {
+            return false;
         }
     }
 
