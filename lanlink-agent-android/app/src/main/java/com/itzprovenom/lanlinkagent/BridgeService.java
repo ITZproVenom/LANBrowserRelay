@@ -48,8 +48,16 @@ public final class BridgeService extends Service {
     static final String RELAY_BASE = "https://odihwrrcgchtqohrgtdb.supabase.co/functions/v1/lanlink-mcp";
     private static final String CHANNEL = "lanlink_bridge";
     private static final int NOTIFICATION_ID = 7441;
-    private static final int[] PORTS = {22, 23, 53, 80, 443, 554, 5555, 8008, 8009, 8080, 8443, 9000};
-    private static final String[] NAMES = {"ssh","telnet","dns","http","https","rtsp","adb","http-alt","cast","http-alt","https-alt","http-alt"};
+    private static final int[] PORTS = {
+            21, 22, 23, 53, 80, 81, 139, 443, 445, 515,
+            554, 631, 1883, 3389, 5000, 5001, 5555, 5900, 7000, 8008,
+            8009, 8080, 8443, 8888, 9000, 9090, 9100, 32400, 62078, 49152
+    };
+    private static final String[] NAMES = {
+            "ftp","ssh","telnet","dns","http","http-alt","netbios","https","smb","lpd",
+            "rtsp","ipp","mqtt","rdp","http-alt","https-alt","adb","vnc","airplay","cast",
+            "cast-alt","http-alt","https-alt","http-alt","http-alt","http-alt","printer","plex","apple-device","upnp"
+    };
     static final String ACTION_STOP_RELAY = "com.itzprovenom.lanlinkagent.STOP_RELAY";
     static final String ACTION_START_RELAY = "com.itzprovenom.lanlinkagent.START_RELAY";
 
@@ -450,7 +458,12 @@ public final class BridgeService extends Service {
         } finally {
             scanPool.shutdownNow();
         }
-        for (Map.Entry<String,String> entry : arp.entrySet()) {
+
+        // TCP probes above trigger neighbor resolution. Re-read the ARP cache
+        // afterwards so hosts with no listening ports are still included when
+        // the kernel learned their MAC address during this scan.
+        Map<String, String> arpAfterScan = arpTable();
+        for (Map.Entry<String,String> entry : arpAfterScan.entrySet()) {
             if (!lan.contains(entry.getKey())) continue;
             boolean exists = false;
             for (int i=0; i<devices.length(); i++) if (entry.getKey().equals(devices.optJSONObject(i).optString("ip"))) { exists=true; break; }
