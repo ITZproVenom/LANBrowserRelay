@@ -269,6 +269,7 @@ public final class BridgeService extends Service {
         capabilities.put("tcp-probe");
         capabilities.put("http");
         capabilities.put("wake-on-lan");
+        capabilities.put("adb-control");
         heartbeat.put("capabilities", capabilities);
         request("/agent/heartbeat", "POST", heartbeat);
         lastAgentMetadataHeartbeat = now;
