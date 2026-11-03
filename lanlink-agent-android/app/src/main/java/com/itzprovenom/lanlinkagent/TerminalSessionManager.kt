@@ -104,7 +104,7 @@ internal object TerminalSessionManager {
         synchronized(session.inputLock) {
             session.writer.write(command)
             session.writer.newLine()
-            session.writer.write("printf '\\n${marker}:%s\\n' \"\\$?\"")
+            session.writer.write("printf '\\n${marker}:%s\\n' \"\$?\"")
             session.writer.newLine()
             session.writer.flush()
             session.lastActivity = System.currentTimeMillis()
