@@ -7,6 +7,9 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
@@ -15,6 +18,7 @@ import java.util.Map;
 final class DeviceIdentity {
     private static final Object LOCK = new Object();
     private static volatile Map<String, String> vendors;
+    private static final long CACHE_AGE_MS = 30L * 24L * 60L * 60L * 1000L;
 
     private DeviceIdentity() {}
 
@@ -23,7 +27,8 @@ final class DeviceIdentity {
         try {
             String ip = device.optString("ip", "");
             String mac = device.isNull("mac") ? "" : device.optString("mac", "");
-            String vendor = vendorForMac(context, mac);
+            VendorResult vendorResult = lookupVendor(context, mac);
+            String vendor = vendorResult.vendor;
             String macType = macAddressType(mac);
             JSONArray services = device.optJSONArray("services");
             if (services == null) services = new JSONArray();
@@ -138,19 +143,87 @@ final class DeviceIdentity {
             device.put("mac_address_type", macType);
             device.put("identity_evidence", evidence);
             device.put("service_fingerprints", fingerprints);
-            device.put("vendor_lookup_source", vendor.isEmpty() ? "not_found_in_bundled_oui_subset" : "bundled_oui_reference");
+            device.put("vendor_lookup_source", vendorResult.source);
         } catch (Exception ignored) {
             // Identity enrichment must never fail the underlying LAN scan.
         }
     }
 
-    static String vendorForMac(Context context, String mac) {
-        String normalized = normalizeMac(mac);
-        if (normalized.length() != 12) return "";
-        if (isLocallyAdministered(normalized)) return "";
+    private static final class VendorResult {
+        final String vendor;
+        final String source;
+        VendorResult(String vendor, String source) {
+            this.vendor = vendor;
+            this.source = source;
+        }
+    }
 
+    private static VendorResult lookupVendor(Context context, String mac) {
+        String normalized = normalizeMac(mac);
+        if (normalized.length() != 12) return new VendorResult("", "mac_unavailable");
+        if (isLocallyAdministered(normalized)) {
+            return new VendorResult("", "locally_administered_mac");
+        }
+
+        android.content.SharedPreferences cache =
+                context.getSharedPreferences("lanlink_vendor_cache", Context.MODE_PRIVATE);
+        String cacheKey = "mac_" + normalized;
+        String cachedVendor = cache.getString(cacheKey, null);
+        long cachedAt = cache.getLong(cacheKey + "_at", 0L);
+        if (cachedVendor != null && System.currentTimeMillis() - cachedAt < CACHE_AGE_MS) {
+            return new VendorResult(cachedVendor, "third_party_cached");
+        }
+
+        // Anonymous IEEE OUI lookup. Only the MAC address is sent; IP address,
+        // hostname, scan results and service banners stay on the TV.
+        try {
+            URL url = new URL("https://api.macadress.com/v1/vendor/" + normalized);
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(1800);
+            connection.setReadTimeout(1800);
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestProperty("Accept", "text/plain");
+            connection.setRequestProperty("User-Agent", "LANLink-TV-Agent/0.3.4");
+            int status = connection.getResponseCode();
+            InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String response = stream == null ? "" : readSmall(stream, 256).trim();
+            connection.disconnect();
+
+            if (status == 200 && !response.isEmpty()
+                    && response.length() <= 180
+                    && !response.toLowerCase(Locale.ROOT).contains("not registered")
+                    && !response.toLowerCase(Locale.ROOT).contains("locally administered")) {
+                cache.edit().putString(cacheKey, response)
+                        .putLong(cacheKey + "_at", System.currentTimeMillis()).apply();
+                return new VendorResult(response, "third_party_macadress_api");
+            }
+            if (status == 404) {
+                cache.edit().putString(cacheKey, "")
+                        .putLong(cacheKey + "_at", System.currentTimeMillis()).apply();
+                return new VendorResult("", response.isEmpty() ? "third_party_no_registration" : response.toLowerCase(Locale.ROOT).replace(' ', '_'));
+            }
+            return new VendorResult(fallbackVendor(context, normalized), "bundled_fallback");
+        } catch (Exception ignored) {
+            String fallback = fallbackVendor(context, normalized);
+            return new VendorResult(fallback, fallback.isEmpty() ? "lookup_unavailable" : "bundled_fallback");
+        }
+    }
+
+    private static String readSmall(InputStream input, int maxBytes) throws Exception {
+        try (InputStream in = input; java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[128];
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                if (out.size() + count > maxBytes) break;
+                out.write(buffer, 0, count);
+            }
+            return out.toString("UTF-8");
+        }
+    }
+
+    private static String fallbackVendor(Context context, String normalized) {
         Map<String, String> table = loadVendors(context);
-        // IEEE MA-S/MA-M records are longer than the traditional 24-bit OUI.
         for (int length : new int[]{9, 7, 6}) {
             String vendor = table.get(normalized.substring(0, length));
             if (vendor != null) return vendor;
