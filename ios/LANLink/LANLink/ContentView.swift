@@ -68,7 +68,7 @@ private struct DashboardView: View {
                             Button {
                                 Task { await agent.connect() }
                             } label: {
-                                Label("Connect Android agent", systemImage: "link")
+                                Label("Search for Android TV", systemImage: "dot.radiowaves.left.and.right")
                                     .font(.headline)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 7)
@@ -154,7 +154,7 @@ private struct DevicesView: View {
                 if agent.devices.isEmpty {
                     ContentUnavailableView("No devices yet",
                                            systemImage: "point.3.connected.trianglepath.dotted",
-                                           description: Text("Connect to the Android agent and scan its local network."))
+                                           description: Text("LANLink is automatically searching for your Android TV agent. Once connected, scan its local network here."))
                 } else {
                     List(agent.devices) { device in
                         NavigationLink {
