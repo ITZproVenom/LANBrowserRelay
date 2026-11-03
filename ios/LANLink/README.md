@@ -35,7 +35,7 @@ The token is stored in the iOS Keychain. It is never written to the repository.
 
 ## Platform limits and safety
 
-- The bridge is foreground-only. iOS may suspend the app and its network requests after it enters the background; LANLink stops polling when the scene becomes inactive and shows that it must be reopened.
+- Without location-assisted mode, iOS may suspend relay polling after the app enters the background. With the optional location background mode enabled, LANLink requests real Core Location updates and enables `allowsBackgroundLocationUpdates`; this can keep the process active while iOS delivers location updates, but is not guaranteed after force-quit, termination, denied permission, or system resource pressure. This mode consumes additional battery and shows the iOS location indicator.
 - iOS does not expose ARP-table access to normal apps, so discovery reports IP addresses and responding services rather than MAC addresses.
 - Scanning and HTTP requests are limited to the current private IPv4 subnet. The app does not execute arbitrary shell commands or ADB commands.
 - The local network permission prompt is required before LAN discovery can work.
