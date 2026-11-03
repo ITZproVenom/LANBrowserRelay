@@ -330,7 +330,7 @@ public final class BridgeService extends Service {
         Lan lan = localLan();
         JSONObject result = new JSONObject();
         result.put("app", "LANLink TV Agent");
-        result.put("version", "0.3.2");
+        result.put("version", "0.3.3");
         result.put("controller_paired", !SecureStore.readControllerToken(this).isEmpty());
         result.put("relay_configured", !SecureStore.read(this).isEmpty());
         result.put("bridge_ip", lan.ip);
