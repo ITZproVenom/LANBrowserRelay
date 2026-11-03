@@ -341,6 +341,11 @@ public final class BridgeService extends Service {
         result.put("last_relay_contact", lastRelayContact);
         result.put("last_error", lastRelayError);
         result.put("device_count", lastDiscoveryResult.optInt("device_count", 0));
+        result.put("tcp_confirmed_count", lastDiscoveryResult.optInt("tcp_confirmed_count", 0));
+        result.put("arp_only_count", lastDiscoveryResult.optInt("arp_only_count", 0));
+        result.put("last_scan_id", lastDiscoveryResult.optString("scan_id", ""));
+        result.put("last_scan_duration_ms", lastDiscoveryResult.optLong("duration_ms", 0));
+        result.put("last_scan_hosts_timed_out", lastDiscoveryResult.optInt("hosts_timed_out", 0));
         return result;
     }
 
@@ -351,6 +356,15 @@ public final class BridgeService extends Service {
                     ? new JSONArray() : lastDiscoveryResult.optJSONArray("devices"));
             result.put("subnet", lastDiscoveryResult.optString("subnet", ""));
             result.put("device_count", lastDiscoveryResult.optInt("device_count", 0));
+            result.put("tcp_confirmed_count", lastDiscoveryResult.optInt("tcp_confirmed_count", 0));
+            result.put("arp_only_count", lastDiscoveryResult.optInt("arp_only_count", 0));
+            result.put("arp_preexisting_count", lastDiscoveryResult.optInt("arp_preexisting_count", 0));
+            result.put("arp_new_count", lastDiscoveryResult.optInt("arp_new_count", 0));
+            result.put("hosts_to_scan", lastDiscoveryResult.optInt("hosts_to_scan", 0));
+            result.put("hosts_completed", lastDiscoveryResult.optInt("hosts_completed", 0));
+            result.put("hosts_timed_out", lastDiscoveryResult.optInt("hosts_timed_out", 0));
+            result.put("duration_ms", lastDiscoveryResult.optLong("duration_ms", 0));
+            result.put("scan_id", lastDiscoveryResult.optString("scan_id", ""));
         } catch (Exception ignored) {}
         return result;
     }
