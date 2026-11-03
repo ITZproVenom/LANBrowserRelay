@@ -180,10 +180,6 @@ final class DeviceFingerprint {
         return result;
     }
 
-    private static JSONObject dnsQuery(String ip, String name, int type, int dnsClass) {
-        return new JSONObject();
-    }
-
     private static String dnsVersion(String ip) {
         try {
             byte[] query = buildDnsQuery("version.bind", 16, 3);
