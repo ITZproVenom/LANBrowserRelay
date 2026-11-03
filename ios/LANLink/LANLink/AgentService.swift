@@ -138,7 +138,7 @@ final class AgentService: ObservableObject {
                 discoveryTask = nil
                 await pairAndConnect(
                     host: candidate,
-                    port: UInt16(defaultPort) ?? 43821,
+                    port: UInt16(Self.defaultPort) ?? 43821,
                     displayName: discoveredName
                 )
                 return
