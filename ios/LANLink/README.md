@@ -7,14 +7,14 @@ The iOS app is the full remote controller for the LANLink Android TV agent. It d
 1. Install LANLink on the iPhone and allow Local Network access when iOS asks.
 2. Install LANLink TV Agent on the Android TV and open it once. The screen is passive; it starts the background service automatically.
 3. Keep both devices on the same private Wi-Fi/Ethernet network.
-4. Open LANLink on the iPhone. It discovers `LANLink-TV` through Bonjour, automatically enrolls its Keychain-generated controller key on first contact and connects. No IP, port, token, QR or manual pairing entry is required.
+4. Open LANLink on the iPhone. It scans the iPhone's private Wi-Fi subnet in bounded batches, probes port `43821` for the LANLink-specific status response, automatically enrolls its Keychain-generated controller key on first contact and connects. No Bonjour allowlist, IP, port, token, QR or manual pairing entry is required.
 
 The Android service starts again after TV reboot. The iPhone reconnects automatically whenever LANLink is open and returns to the foreground.
 
 ## Architecture
 
 - **Android TV agent:** foreground service, Bonjour advertisement, local network discovery, device operations and ChatGPT relay polling.
-- **iOS controller:** Bonjour browser, automatic first-use enrollment, dashboard, device list/details, scans, relay start/pause, activity, probe, constrained HTTP GET and Wake-on-LAN.
+- **iOS controller:** bounded same-subnet TCP discovery, automatic first-use enrollment, dashboard, device list/details, Android-backed scans, relay start/pause, activity, probe, constrained HTTP GET and Wake-on-LAN.
 - **ChatGPT:** uses the existing LANLink MCP relay; queued commands are executed by the Android TV agent.
 
 ## Security and recovery
