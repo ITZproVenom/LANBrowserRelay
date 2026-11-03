@@ -238,93 +238,16 @@ private struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Relay") {
-                    TextField("HTTPS relay endpoint", text: $agent.relayEndpoint)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-                        .textFieldStyle(.plain)
-                        .focused($focusedField, equals: .relay)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .token }
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-
-                    HStack(spacing: 10) {
-                        Group {
-                            if showToken {
-                                TextField("iPhone agent token", text: $agent.agentToken)
-                                    .textFieldStyle(.plain)
-                                    .focused($focusedField, equals: .token)
-                                    .textContentType(.password)
-                                    .accessibilityLabel("iPhone agent token")
-                            } else {
-                                SecureField("iPhone agent token", text: $agent.agentToken)
-                                    .textFieldStyle(.plain)
-                                    .focused($focusedField, equals: .token)
-                                    .textContentType(.password)
-                                    .accessibilityLabel("iPhone agent token")
-                            }
-                        }
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.done)
-                        .onSubmit { focusedField = nil }
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-
-                        Button {
-                            showToken.toggle()
-                            focusedField = .token
-                        } label: {
-                            Image(systemName: showToken ? "eye.slash" : "eye")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 36, height: 40)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(showToken ? "Hide agent token" : "Show agent token")
-                    }
-
-                    HStack {
-                        Button("Use default") {
-                            agent.relayEndpoint = AgentService.defaultRelay
-                            focusedField = nil
-                        }
-                        Spacer()
-                        Button("Save settings") {
-                            focusedField = nil
-                            saved = agent.saveSettings()
-                        }
-                        .fontWeight(.semibold)
-                    }
-                    Text("Tap either field to edit. The token is saved in iOS Keychain. Accepts a trailing slash or /mcp suffix.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    relayCard
+                    localNetworkCard
+                    backgroundCard
+                    statusCard
                 }
-
-                Section("Local network") {
-                    LabeledContent("iPhone address", value: agent.localAddress)
-                    Text("LANLink only scans and sends commands to private IPv4 devices on the same subnet. iOS does not expose MAC address or ARP-table access to ordinary apps.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Background operation") {
-                    Label("Background polling is best-effort", systemImage: "iphone.gen3")
-                        .font(.subheadline.weight(.medium))
-                    Text("LANLink no longer stops its polling task just because you minimise it. iOS can still suspend the app after a short period. Ordinary apps cannot guarantee continuous background network polling.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Status") {
-                    Text(agent.statusMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                .padding(16)
             }
+            .background(Color(uiColor: .systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Settings")
             .toolbar {
@@ -339,5 +262,150 @@ private struct SettingsView: View {
                 Text("Your agent token is stored in iOS Keychain.")
             }
         }
+    }
+
+    private var relayCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("RELAY")
+                .font(.caption.weight(.semibold))
+                .tracking(1.0)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                TextField("HTTPS relay endpoint", text: $agent.relayEndpoint)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.plain)
+                    .focused($focusedField, equals: .relay)
+                    .submitLabel(.next)
+                    .onSubmit { focusedField = .token }
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 52)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground))
+
+                Divider().overlay(Color.secondary.opacity(0.18))
+
+                HStack(spacing: 10) {
+                    Group {
+                        if showToken {
+                            TextField("iPhone agent token", text: $agent.agentToken)
+                                .textFieldStyle(.plain)
+                                .focused($focusedField, equals: .token)
+                                .textContentType(.password)
+                        } else {
+                            SecureField("iPhone agent token", text: $agent.agentToken)
+                                .textFieldStyle(.plain)
+                                .focused($focusedField, equals: .token)
+                                .textContentType(.password)
+                        }
+                    }
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onSubmit { focusedField = nil }
+                    .frame(minHeight: 52)
+
+                    Button {
+                        showToken.toggle()
+                        focusedField = .token
+                    } label: {
+                        Image(systemName: showToken ? "eye.slash" : "eye")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 40, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showToken ? "Hide agent token" : "Show agent token")
+                }
+                .padding(.horizontal, 14)
+                .background(Color(uiColor: .tertiarySystemGroupedBackground))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            HStack(spacing: 12) {
+                Button {
+                    focusedField = nil
+                    agent.relayEndpoint = AgentService.defaultRelay
+                    agent.statusMessage = "Default relay URL restored. Tap Save settings to store it."
+                } label: {
+                    Text("Use default")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.bordered)
+                .tint(.cyan)
+
+                Button {
+                    focusedField = nil
+                    saved = agent.saveSettings()
+                } label: {
+                    Text("Save settings")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+
+            Text("The token is saved in iOS Keychain. Relay URLs may include a trailing slash or /mcp suffix.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var localNetworkCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("LOCAL NETWORK")
+                .font(.caption.weight(.semibold))
+                .tracking(1.0)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                LabeledContent("iPhone address", value: agent.localAddress)
+                Divider()
+                Text("LANLink only scans and sends commands to private IPv4 devices on the same subnet. iOS does not expose MAC address or ARP-table access to ordinary apps.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+        }
+    }
+
+    private var backgroundCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("BACKGROUND OPERATION")
+                .font(.caption.weight(.semibold))
+                .tracking(1.0)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Background polling is best-effort", systemImage: "iphone.gen3")
+                    .font(.subheadline.weight(.semibold))
+                Text("LANLink does not intentionally stop polling when minimised. iOS may still suspend the app after a short period. Ordinary apps cannot guarantee continuous background network polling.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+        }
+    }
+
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("STATUS").font(.caption.weight(.semibold)).tracking(1.0).foregroundStyle(.secondary)
+            Text(agent.statusMessage)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 }
