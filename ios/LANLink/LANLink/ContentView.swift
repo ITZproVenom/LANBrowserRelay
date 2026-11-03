@@ -3,25 +3,32 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var agent: AgentService
     @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab = 0
 
     var body: some View {
-        TabView {
-            DashboardView()
+        TabView(selection: $selectedTab) {
+            DashboardView(onActivateRelay: { selectedTab = 3 })
                 .tabItem { Label("Overview", systemImage: "square.grid.2x2.fill") }
+                .tag(0)
             DevicesView()
                 .tabItem { Label("Devices", systemImage: "point.3.connected.trianglepath.dotted") }
+                .tag(1)
             ActivityView()
                 .tabItem { Label("Activity", systemImage: "waveform.path") }
+                .tag(2)
             ControllerSettingsView()
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                .tag(3)
         }
         .tint(.cyan)
         .onChange(of: scenePhase) { phase in agent.handleScenePhase(phase) }
+        .onOpenURL { agent.handleIncomingURL($0) }
     }
 }
 
 private struct DashboardView: View {
     @EnvironmentObject private var agent: AgentService
+    let onActivateRelay: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -52,7 +59,7 @@ private struct DashboardView: View {
                         Text(agent.statusMessage)
                             .font(.subheadline).foregroundStyle(.secondary)
 
-                        if agent.isConnected {
+                        if agent.isConnected && agent.isRelayConfigured {
                             Button {
                                 agent.isRunning ? agent.stop() : agent.start()
                             } label: {
@@ -64,6 +71,15 @@ private struct DashboardView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(agent.isRunning ? .orange : .cyan)
+                        } else if agent.isConnected {
+                            Button(action: onActivateRelay) {
+                                Label("Activate ChatGPT relay", systemImage: "key.fill")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
                         } else {
                             Button {
                                 Task { await agent.connect() }
@@ -276,6 +292,7 @@ private struct ActivityView: View {
 
 private struct ControllerSettingsView: View {
     @EnvironmentObject private var agent: AgentService
+    @State private var activationCode = ""
 
     var body: some View {
         NavigationStack {
@@ -322,6 +339,47 @@ private struct ControllerSettingsView: View {
                     }
                     .padding(16)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+
+                    if agent.isConnected && !agent.isRelayConfigured {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("CHATGPT RELAY ACTIVATION")
+                                .font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
+                            Text("The iPhone and TV are paired. Activate the relay once with the one-time code for this TV. The TV stores the resulting credential encrypted; it is not saved in the iPhone app.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            SecureField("64-character activation code", text: $activationCode)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .font(.system(.body, design: .monospaced))
+                                .padding(12)
+                                .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                            Button {
+                                Task {
+                                    await agent.provisionRelay(code: activationCode)
+                                    if !agent.hasPendingRelayCredential {
+                                        activationCode = ""
+                                    }
+                                }
+                            } label: {
+                                if agent.isProvisioningRelay {
+                                    ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+                                } else {
+                                    Label(agent.hasPendingRelayCredential ? "Finish activation" : "Activate ChatGPT relay",
+                                          systemImage: "key.fill")
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                            .disabled(agent.isProvisioningRelay || (!agent.hasPendingRelayCredential && activationCode.count != 64))
+                            Text("Activation codes expire after a short time and can be used once. A pending activation can be safely retried from this screen.")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    }
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("SECURITY")
