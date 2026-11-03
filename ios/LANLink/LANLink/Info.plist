@@ -15,9 +15,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.5</string>
+  <string>0.1.6</string>
   <key>CFBundleVersion</key>
-  <string>7</string>
+  <string>8</string>
   <key>LSRequiresIPhoneOS</key>
   <true/>
   <key>NSAppTransportSecurity</key>
@@ -27,10 +27,13 @@
   </dict>
   <key>UIBackgroundModes</key>
   <array>
+    <string>audio</string>
     <string>location</string>
   </array>
   <key>NSLocationWhenInUseUsageDescription</key>
-  <string>LANLink uses real location updates during an explicitly enabled bridge session to maintain the active background location session while you use LANLink to manage your local network. Coordinates are not stored or sent to the relay.</string>
+  <string>LANLink uses low-accuracy location updates only while its bridge is active to support background keep-alive. Coordinates are not stored or sent to the relay.</string>
+  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+  <string>LANLink requests background location updates during an active bridge session so iOS can keep its process running while location updates are delivered. Coordinates are not stored or sent to the relay.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>LANLink discovers and communicates with devices on your local network when you start a scan or enable the bridge.</string>
   <key>UIApplicationSupportsIndirectInputEvents</key>
