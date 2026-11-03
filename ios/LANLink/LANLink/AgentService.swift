@@ -187,7 +187,7 @@ final class AgentService: ObservableObject {
         guard Self.isPrivateIPv4(host) else { return nil }
 
         for port in Self.candidatePorts {
-            guard let url = URL(string: "http://\\(host):\\(port)/v1/status") else { continue }
+            guard let url = URL(string: "http://\(host):\(port)/v1/status") else { continue }
             var probe = URLRequest(url: url)
             probe.httpMethod = "GET"
             probe.timeoutInterval = 1.2
