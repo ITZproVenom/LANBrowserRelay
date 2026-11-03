@@ -12,11 +12,13 @@
     <application
         android:allowBackup="false"
         android:label="LANLink TV Agent"
+        android:banner="@drawable/lanlink_tv_banner"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
+            android:banner="@drawable/lanlink_tv_banner"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
             android:exported="true">
             <intent-filter>
