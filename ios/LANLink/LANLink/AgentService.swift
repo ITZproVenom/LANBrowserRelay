@@ -18,6 +18,15 @@ struct ActivityEntry: Identifiable {
     let failed: Bool
 }
 
+struct AgentLogEntry: Identifiable {
+    let id: String
+    let timestamp: Date
+    let level: String
+    let event: String
+    let message: String
+    let details: String
+}
+
 private final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
@@ -44,6 +53,8 @@ final class AgentService: ObservableObject {
     @Published private(set) var subnet = ""
     @Published private(set) var devices: [ControllerDevice] = []
     @Published private(set) var activity: [ActivityEntry] = []
+    @Published private(set) var logs: [AgentLogEntry] = []
+    @Published private(set) var scanSummary = ""
     @Published private(set) var lastRelayContact: Date?
     @Published private(set) var discoveredName = ""
     @Published var statusMessage = "Searching for LANLink on your local network…"
@@ -411,8 +422,16 @@ final class AgentService: ObservableObject {
             let result = try await request("/v1/scan", method: "POST", body: [:])
             devices = Self.parseDevices(result["devices"] as? [[String: Any]] ?? [])
             subnet = result["subnet"] as? String ?? subnet
-            statusMessage = "Android discovered \(devices.count) device(s) on \(subnet)."
-            addLocalActivity("LAN scan complete", "\(devices.count) devices reported by Android.", failed: false)
+            let total = result["device_count"] as? Int ?? devices.count
+            let tcp = result["tcp_confirmed_count"] as? Int ?? 0
+            let arp = result["arp_only_count"] as? Int ?? max(0, total - tcp)
+            let preexisting = result["arp_preexisting_count"] as? Int ?? 0
+            let learned = result["arp_new_count"] as? Int ?? 0
+            let timedOut = result["hosts_timed_out"] as? Int ?? 0
+            let duration = result["duration_ms"] as? Int ?? 0
+            scanSummary = "\(total) observed · \(tcp) TCP-confirmed · \(arp) ARP-only (\(preexisting) pre-existing, \(learned) learned) · \(timedOut) timed out · \(duration) ms"
+            statusMessage = "Android observed \(total) entries on \(subnet): \(tcp) TCP-confirmed and \(arp) ARP-only."
+            addLocalActivity("LAN scan complete", scanSummary, failed: false)
             await refreshPanels()
         } catch {
             statusMessage = "Android scan failed: \(error.localizedDescription)"
@@ -466,9 +485,20 @@ final class AgentService: ObservableObject {
     private func refreshPanels() async {
         async let devicesResult = request("/v1/devices", method: "GET")
         async let activityResult = request("/v1/activity", method: "GET")
+        async let logsResult = request("/v1/logs", method: "GET")
         do {
-            let (deviceObject, activityObject) = try await (devicesResult, activityResult)
+            let (deviceObject, activityObject, logsObject) = try await (devicesResult, activityResult, logsResult)
             devices = Self.parseDevices(deviceObject["devices"] as? [[String: Any]] ?? [])
+            let total = deviceObject["device_count"] as? Int ?? devices.count
+            let tcp = deviceObject["tcp_confirmed_count"] as? Int ?? 0
+            let arp = deviceObject["arp_only_count"] as? Int ?? max(0, total - tcp)
+            if total > 0 {
+                let preexisting = deviceObject["arp_preexisting_count"] as? Int ?? 0
+                let learned = deviceObject["arp_new_count"] as? Int ?? 0
+                let timedOut = deviceObject["hosts_timed_out"] as? Int ?? 0
+                let duration = deviceObject["duration_ms"] as? Int ?? 0
+                scanSummary = "\(total) observed · \(tcp) TCP-confirmed · \(arp) ARP-only (\(preexisting) pre-existing, \(learned) learned) · \(timedOut) timed out · \(duration) ms"
+            }
             let entries = activityObject["events"] as? [[String: Any]] ?? []
             activity = entries.compactMap { entry in
                 let title = entry["title"] as? String ?? "Android event"
@@ -481,9 +511,37 @@ final class AgentService: ObservableObject {
                     failed: entry["failed"] as? Bool ?? false
                 )
             }
+            logs = Self.parseLogs(logsObject["logs"] as? [[String: Any]] ?? [])
         } catch {
             statusMessage = "Android connected, but a dashboard panel failed: \(error.localizedDescription)"
         }
+    }
+
+    func exportDiagnostics() -> String {
+        let header = "LANLink diagnostics\nTV: \(androidHost):\(portText)\nSubnet: \(subnet)\nExported: \(Date().formatted())\n"
+        let entries = logs.map { entry in
+            let stamp = entry.timestamp.formatted(date: .numeric, time: .standard)
+            return "[\(stamp)] [\(entry.level)] \(entry.event): \(entry.message)\n\(entry.details)"
+        }
+        return header + "\n" + entries.joined(separator: "\n\n")
+    }
+
+    private static func parseLogs(_ raw: [[String: Any]]) -> [AgentLogEntry] {
+        raw.compactMap { item in
+            guard let id = item["id"] as? String else { return nil }
+            let milliseconds = item["timestamp"] as? Double ?? 0
+            let detailsObject = item["details"] as? [String: Any] ?? [:]
+            let detailsData = (try? JSONSerialization.data(withJSONObject: detailsObject, options: [.sortedKeys]))
+            let details = detailsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            return AgentLogEntry(
+                id: id,
+                timestamp: Date(timeIntervalSince1970: milliseconds / 1000),
+                level: item["level"] as? String ?? "INFO",
+                event: item["event"] as? String ?? "unknown",
+                message: item["message"] as? String ?? "",
+                details: details
+            )
+        }.suffix(200).reversed()
     }
 
     private func request(
