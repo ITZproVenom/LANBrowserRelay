@@ -197,11 +197,11 @@ final class AgentService: ObservableObject {
         }
     }
 
-    func probe(_ device: LANDevice) {
+    func probe(_ device: ControllerDevice) {
         runCommand("probe", payload: ["ip": device.ip])
     }
 
-    func wake(_ device: LANDevice) {
+    func wake(_ device: ControllerDevice) {
         guard let mac = device.mac, !mac.isEmpty else {
             statusMessage = "This device has no MAC address in Android's ARP cache."
             return
