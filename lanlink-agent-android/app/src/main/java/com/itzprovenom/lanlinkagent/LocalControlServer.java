@@ -148,6 +148,8 @@ final class LocalControlServer {
                 result = service.controlDevices();
             } else if ("GET".equals(method) && "/v1/activity".equals(path)) {
                 result = service.controlActivity();
+            } else if ("GET".equals(method) && "/v1/logs".equals(path)) {
+                result = service.controlLogs();
             } else if ("POST".equals(method) && "/v1/scan".equals(path)) {
                 result = service.controlScan();
             } else if ("POST".equals(method) && "/v1/relay/credential".equals(path)) {
