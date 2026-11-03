@@ -37,17 +37,37 @@ final class AgentService: ObservableObject {
     private var pollTask: Task<Void, Never>?
 
     init() {
-        relayEndpoint = UserDefaults.standard.string(forKey: "relayEndpoint") ?? Self.defaultRelay
+        let storedEndpoint = UserDefaults.standard.string(forKey: "relayEndpoint") ?? Self.defaultRelay
+        relayEndpoint = Self.normalizedRelayEndpoint(storedEndpoint) ?? Self.defaultRelay
         agentToken = SecureStore.read(account: "agent-token") ?? ""
         localAddress = LocalNetworkAgent.interfaceInfo()?.address ?? "Not connected"
     }
 
+    /// Accepts the Supabase Function URL with or without a trailing slash or the
+    /// optional MCP transport suffix. Agent requests always target the function root.
+    private static func normalizedRelayEndpoint(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              components.scheme?.lowercased() == "https",
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil else {
+            return nil
+        }
+
+        var path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.hasSuffix("/mcp") {
+            path.removeLast(4)
+        }
+        guard path == "functions/v1/lanlink-mcp" else { return nil }
+        components.path = "/" + path
+        return components.url?.absoluteString
+    }
+
     @discardableResult
     func saveSettings() -> Bool {
-        let endpoint = relayEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: endpoint), url.scheme == "https", url.host != nil,
-              url.path.hasSuffix("/functions/v1/lanlink-mcp") else {
-            statusMessage = "Use the HTTPS LANLink relay endpoint."
+        guard let endpoint = Self.normalizedRelayEndpoint(relayEndpoint) else {
+            statusMessage = "Relay URL must be the LANLink Supabase HTTPS Function URL. A trailing slash or /mcp suffix is okay."
             return false
         }
         do {
