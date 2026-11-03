@@ -18,11 +18,28 @@ import javax.crypto.spec.GCMParameterSpec;
 final class SecureStore {
     private static final String PREFS = "lanlink_secure";
     private static final String VALUE = "agent_token";
+    private static final String CONTROLLER_VALUE = "controller_token";
     private static final String ALIAS = "lanlink_agent_aes";
 
     private SecureStore() {}
 
     static void write(Context context, String token) {
+        writeValue(context, VALUE, token);
+    }
+
+    static String read(Context context) {
+        return readValue(context, VALUE);
+    }
+
+    static void writeControllerToken(Context context, String token) {
+        writeValue(context, CONTROLLER_VALUE, token);
+    }
+
+    static String readControllerToken(Context context) {
+        return readValue(context, CONTROLLER_VALUE);
+    }
+
+    private static void writeValue(Context context, String name, String token) {
         try {
             SecretKey key = getKey();
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -33,15 +50,15 @@ final class SecureStore {
             buffer.putInt(iv.length);
             buffer.put(iv);
             buffer.put(encrypted);
-            prefs(context).edit().putString(VALUE, Base64.encodeToString(buffer.array(), Base64.NO_WRAP)).apply();
+            prefs(context).edit().putString(name, Base64.encodeToString(buffer.array(), Base64.NO_WRAP)).apply();
         } catch (Exception e) {
             throw new IllegalStateException("Could not encrypt bridge token", e);
         }
     }
 
-    static String read(Context context) {
+    private static String readValue(Context context, String name) {
         try {
-            String encoded = prefs(context).getString(VALUE, "");
+            String encoded = prefs(context).getString(name, "");
             if (encoded == null || encoded.isEmpty()) return "";
             ByteBuffer buffer = ByteBuffer.wrap(Base64.decode(encoded, Base64.NO_WRAP));
             int ivLength = buffer.getInt();
