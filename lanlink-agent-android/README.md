@@ -13,7 +13,7 @@ The Android TV app is a headless LANLink engine. It is deliberately not a naviga
 
 ## ChatGPT relay
 
-The Android service preserves a previously saved relay agent credential when upgrading from the older setup build. If no relay credential exists on a fresh install, local iPhone control and LAN discovery still work, but ChatGPT MCP commands remain unavailable until the Android agent is provisioned with a relay identity. The iPhone-to-TV pairing itself requires no manual setup.
+The Android service preserves a previously saved relay agent credential when upgrading from the older setup build. If no relay credential exists, local iPhone control still works. In the iPhone app, enter the TV's one-time activation code under Settings. The iPhone exchanges it for a per-TV relay identity and installs that identity through the authenticated local control API. The TV encrypts it with Android Keystore and starts polling automatically. The long-lived relay token is never shown on the TV or stored on the iPhone.
 
 ## iPhone controller API
 
@@ -24,6 +24,7 @@ The Android foreground service serves an authenticated HTTP API on TCP port 4382
 - `GET /v1/devices` - most recent Android-side device inventory
 - `GET /v1/activity` - recent agent activity
 - `POST /v1/scan` - run Android-side LAN discovery
+- `POST /v1/relay/credential` - install a newly enrolled relay identity (controller Bearer token required)
 - `POST /v1/bridge/start` - start ChatGPT relay polling
 - `POST /v1/bridge/stop` - pause ChatGPT relay polling but keep the controller API running
 - `POST /v1/command` - execute a supported `probe`, constrained `http`, or `wol` action
