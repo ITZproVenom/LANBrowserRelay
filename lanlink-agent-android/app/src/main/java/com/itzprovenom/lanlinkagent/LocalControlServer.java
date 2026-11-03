@@ -25,15 +25,13 @@ final class LocalControlServer {
     private static final int MAX_BODY_BYTES = 65_536;
 
     private final BridgeService service;
-    private final String controllerToken;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ExecutorService clients = Executors.newFixedThreadPool(4);
     private ServerSocket serverSocket;
     private Thread acceptThread;
 
-    LocalControlServer(BridgeService service, String controllerToken) {
+    LocalControlServer(BridgeService service) {
         this.service = service;
-        this.controllerToken = controllerToken;
     }
 
     void start() throws Exception {
@@ -125,14 +123,23 @@ final class LocalControlServer {
                 return;
             }
 
+            JSONObject body = bodyBytes.length == 0
+                    ? new JSONObject()
+                    : new JSONObject(new String(bodyBytes, StandardCharsets.UTF_8));
+
+            // First-connection enrollment: only the first controller on this
+            // private subnet can claim the single controller slot. The iOS app
+            // generates the random key and retains it in Keychain.
+            if ("POST".equals(method) && "/v1/pair".equals(path)) {
+                JSONObject paired = service.pairController(body.optString("controller_token", ""));
+                respond(client.getOutputStream(), 200, paired);
+                return;
+            }
+
             if (!constantTimeTokenMatch(authorization)) {
                 respond(client.getOutputStream(), 401, new JSONObject().put("error", "Invalid controller token."));
                 return;
             }
-
-            JSONObject body = bodyBytes.length == 0
-                    ? new JSONObject()
-                    : new JSONObject(new String(bodyBytes, StandardCharsets.UTF_8));
 
             JSONObject result;
             if ("GET".equals(method) && "/v1/status".equals(path)) {
@@ -164,6 +171,7 @@ final class LocalControlServer {
     }
 
     private boolean constantTimeTokenMatch(String authorization) {
+        String controllerToken = SecureStore.readControllerToken(service);
         if (controllerToken == null || controllerToken.isEmpty()) return false;
         String expected = "Bearer " + controllerToken;
         return MessageDigest.isEqual(
