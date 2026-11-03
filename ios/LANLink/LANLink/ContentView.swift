@@ -122,9 +122,7 @@ private struct DashboardView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationBarHidden(true)
             .task {
-                if !agent.isConnected && !agent.androidHost.isEmpty && !agent.controllerToken.isEmpty {
-                    await agent.connect()
-                }
+                agent.startDiscovery()
             }
         }
     }
@@ -278,85 +276,59 @@ private struct ActivityView: View {
 
 private struct ControllerSettingsView: View {
     @EnvironmentObject private var agent: AgentService
-    @State private var saved = false
-    @State private var showToken = false
-    @FocusState private var focusedField: Field?
-
-    private enum Field: Hashable { case host, port, token }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("ANDROID TV PAIRING")
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("AUTOMATIC CONNECTION")
                             .font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
-
-                        TextField("Android TV IP address", text: $agent.androidHost)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($focusedField, equals: .host)
-
-                        TextField("Controller port", text: $agent.portText)
-                            .keyboardType(.numberPad)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($focusedField, equals: .port)
-
                         HStack(spacing: 10) {
-                            Group {
-                                if showToken {
-                                    TextField("Controller pairing key", text: $agent.controllerToken)
-                                        .textFieldStyle(.roundedBorder)
-                                        .focused($focusedField, equals: .token)
-                                } else {
-                                    SecureField("Controller pairing key", text: $agent.controllerToken)
-                                        .textFieldStyle(.roundedBorder)
-                                        .focused($focusedField, equals: .token)
-                                }
+                            Image(systemName: agent.isConnected ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right")
+                                .font(.title2)
+                                .foregroundStyle(agent.isConnected ? .green : .cyan)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(agent.isConnected ? "Android TV connected" : "Searching for Android TV")
+                                    .font(.headline)
+                                Text(agent.statusMessage)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
                             }
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-
-                            Button {
-                                showToken.toggle()
-                                focusedField = .token
-                            } label: {
-                                Image(systemName: showToken ? "eye.slash" : "eye")
-                                    .frame(width: 40, height: 44)
-                            }
-                            .buttonStyle(.plain)
                         }
 
-                        HStack(spacing: 12) {
-                            Button("Save pairing") {
-                                focusedField = nil
-                                saved = agent.saveSettings()
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("Save & connect") {
-                                focusedField = nil
-                                Task {
-                                    if agent.saveSettings() { await agent.connect() }
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
+                        if !agent.discoveredName.isEmpty {
+                            LabeledContent("Discovered service", value: agent.discoveredName)
                         }
+                        if !agent.bridgeAddress.isEmpty {
+                            LabeledContent("TV address", value: agent.bridgeAddress)
+                        }
+                        if !agent.subnet.isEmpty {
+                            LabeledContent("Subnet", value: agent.subnet)
+                        }
+
+                        Button {
+                            agent.startDiscovery()
+                        } label: {
+                            Label("Search again", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                        }
+                        .buttonStyle(.borderedProminent)
                         .tint(.cyan)
-                        .frame(maxWidth: .infinity)
 
-                        Text("On Android, open LANLink TV Agent. Enter the Android relay token and start the agent once. The TV then displays its IP address, port and a separate controller pairing key. Enter those details here.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        Text("LANLink automatically finds the Android TV agent on the same Wi-Fi or Ethernet network. No IP address, port, pairing code or manual token entry is needed. The first iPhone to claim an unpaired TV becomes its controller.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(16)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("CONNECTION STATUS")
+                        Text("SECURITY")
                             .font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
-                        Text(agent.statusMessage).font(.footnote).foregroundStyle(.secondary)
-                        Button("Disconnect controller") { agent.disconnect() }
-                            .disabled(!agent.isConnected)
+                        Text("The iPhone creates a random controller key and keeps it in Keychain. The TV stores the enrolled key using Android Keystore. Automatic first-time pairing is limited to the same private LAN and one controller. Use a trusted home network; resetting the Android app's data clears its enrolled controller.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -366,18 +338,6 @@ private struct ControllerSettingsView: View {
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Settings")
-            .scrollDismissesKeyboard(.interactively)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focusedField = nil }
-                }
-            }
-            .alert("Pairing saved", isPresented: $saved) {
-                Button("Done", role: .cancel) { }
-            } message: {
-                Text("The controller key is stored in iOS Keychain.")
-            }
         }
     }
 }
