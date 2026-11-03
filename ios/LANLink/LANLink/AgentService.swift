@@ -72,7 +72,8 @@ final class AgentService: ObservableObject {
         statusMessage = "Searching this Wi-Fi network for the LANLink TV agent…"
 
         discoveryTask = Task { [weak self] in
-            await self?.runDirectDiscovery()
+            guard let self else { return }
+            await self.runDirectDiscovery()
         }
     }
 
@@ -228,7 +229,7 @@ final class AgentService: ObservableObject {
         } catch {
             isConnected = false
             statusMessage = "Found \(displayName), but connection failed: \(error.localizedDescription)"
-            // Keep discovery alive so a reachable agent can be retried.
+            // The dashboard's Search button can retry discovery.
         }
     }
 
