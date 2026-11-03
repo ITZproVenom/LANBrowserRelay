@@ -183,18 +183,43 @@ private struct DevicesView: View {
                         NavigationLink {
                             DeviceDetailView(device: device)
                         } label: {
-                            VStack(alignment: .leading, spacing: 7) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 HStack {
-                                    Text(device.hostname ?? device.ip).font(.headline)
+                                    Text(device.friendlyName ?? device.hostname ?? device.deviceType)
+                                        .font(.headline)
+                                        .lineLimit(1)
                                     Spacer()
                                     Text(device.ip).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    Text(device.deviceType)
+                                        .font(.caption.weight(.medium))
+                                    Text("·")
+                                    Text("\(device.identityConfidence.capitalized) confidence")
+                                        .font(.caption)
+                                    Spacer()
+                                    Circle()
+                                        .fill(device.identityConfidence == "high" ? Color.green : device.identityConfidence == "medium" ? Color.orange : Color.secondary)
+                                        .frame(width: 7, height: 7)
+                                }
+                                .foregroundStyle(.secondary)
+                                if let vendor = device.vendor, !vendor.isEmpty {
+                                    Text([vendor, device.model].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                } else if let manufacturer = device.manufacturer, !manufacturer.isEmpty {
+                                    Text([manufacturer, device.model].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                 }
                                 Text(device.discoverySource == "agent"
                                      ? "LANLink Android agent"
                                      : (device.tcpConfirmed
                                         ? "TCP confirmed" + (device.services.isEmpty ? "" : " · " + device.services.joined(separator: "  ·  "))
                                         : "ARP only · not TCP-confirmed"))
-                                    .font(.caption)
+                                    .font(.caption2)
                                     .foregroundStyle(device.discoverySource == "agent" ? .cyan : (device.tcpConfirmed ? .green : .orange))
                                 if let mac = device.mac {
                                     Text(mac.uppercased()).font(.caption2.monospaced()).foregroundStyle(.tertiary)
@@ -231,11 +256,54 @@ private struct DeviceDetailView: View {
 
     var body: some View {
         Form {
-            Section("Device") {
+            Section("Identification") {
+                LabeledContent("Classification", value: device.deviceType)
+                LabeledContent("Confidence", value: device.identityConfidence.capitalized)
+                LabeledContent("Method", value: device.identityMethod.replacingOccurrences(of: "_", with: " "))
                 LabeledContent("IP address", value: device.ip)
-                if let host = device.hostname { LabeledContent("Name", value: host) }
-                if let mac = device.mac { LabeledContent("MAC", value: mac.uppercased()) }
-                LabeledContent("Services", value: device.services.isEmpty ? "None detected" : device.services.joined(separator: ", "))
+                if let friendly = device.friendlyName, !friendly.isEmpty {
+                    LabeledContent("Friendly name", value: friendly)
+                }
+                if let host = device.hostname {
+                    LabeledContent("Hostname", value: host)
+                    if let source = device.hostnameSource {
+                        LabeledContent("Name source", value: source)
+                    }
+                }
+                if let vendor = device.vendor, !vendor.isEmpty {
+                    LabeledContent("MAC vendor", value: vendor)
+                }
+                if let manufacturer = device.manufacturer, !manufacturer.isEmpty {
+                    LabeledContent("Manufacturer", value: manufacturer)
+                }
+                if let model = device.model, !model.isEmpty {
+                    LabeledContent("Model", value: model)
+                }
+                if let mac = device.mac { LabeledContent("MAC address", value: mac.uppercased()) }
+                LabeledContent("MAC type", value: device.macAddressType.replacingOccurrences(of: "_", with: " "))
+                LabeledContent("Vendor source", value: device.vendorLookupSource.replacingOccurrences(of: "_", with: " "))
+                LabeledContent("Discovery", value: device.discoverySource.replacingOccurrences(of: "_", with: " "))
+            }
+            if !device.identityEvidence.isEmpty {
+                Section("Why LANLink identified it this way") {
+                    ForEach(Array(device.identityEvidence.enumerated()), id: \.offset) { _, evidence in
+                        Label(evidence, systemImage: "checkmark.seal")
+                            .font(.footnote)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if !device.serviceFingerprints.isEmpty {
+                Section("Service fingerprints") {
+                    ForEach(Array(device.serviceFingerprints.enumerated()), id: \.offset) { _, fingerprint in
+                        Text(fingerprint)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            Section("Open services") {
+                LabeledContent("Ports", value: device.services.isEmpty ? "None detected" : device.services.joined(separator: ", "))
             }
             Section("Actions") {
                 Button {
@@ -259,7 +327,7 @@ private struct DeviceDetailView: View {
                 }
             }
         }
-        .navigationTitle(device.hostname ?? device.ip)
+        .navigationTitle(device.friendlyName ?? device.hostname ?? device.deviceType)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
