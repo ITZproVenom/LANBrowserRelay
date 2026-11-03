@@ -6,7 +6,7 @@ The Android TV app is a headless LANLink engine. It is deliberately not a naviga
 
 - Open LANLink once after installation to start its foreground service. It also starts automatically after TV reboot and after app updates.
 - The service advertises `_lanlink._tcp` as `LANLink-TV` using Android Network Service Discovery.
-- The iPhone app browses for this advertisement, resolves the TV's LAN address and connects automatically.
+- The iPhone app scans its private IPv4 subnet and probes the LANLink control API on port 43821, so discovery also works inside LiveContainer without Bonjour.
 - No TV IP entry, controller token display, QR code, PIN or manual iPhone pairing form is required.
 - On first contact, the iPhone generates a 256-bit controller key in Keychain. The TV accepts the first controller on its private subnet and stores the key encrypted using Android Keystore. Later connections require the saved key.
 - Only one iPhone controller is enrolled per TV. To reset controller enrollment, clear LANLink TV Agent app data on the TV and relaunch it.
