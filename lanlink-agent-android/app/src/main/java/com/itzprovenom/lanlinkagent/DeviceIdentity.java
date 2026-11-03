@@ -27,6 +27,10 @@ final class DeviceIdentity {
         try {
             String ip = device.optString("ip", "");
             String mac = device.isNull("mac") ? "" : device.optString("mac", "");
+            String existingHostname = device.optString("hostname", "");
+            if ("null".equalsIgnoreCase(existingHostname)) existingHostname = "";
+            String discoverySource = device.optString("discovery_source", "unknown");
+            String effectiveHostname = hostname == null || hostname.isEmpty() ? existingHostname : hostname;
             VendorResult vendorResult = lookupVendor(context, mac);
             String vendor = vendorResult.vendor;
             String macType = macAddressType(mac);
@@ -44,8 +48,10 @@ final class DeviceIdentity {
             if (isGateway) evidence.put("Default gateway route points to this address.");
             if (!vendor.isEmpty()) evidence.put("MAC prefix registered to " + vendor + ".");
             if ("locally_administered".equals(macType)) evidence.put("MAC is locally administered; vendor lookup is not reliable.");
-            if (hostname != null && !hostname.isEmpty()) {
-                evidence.put("Hostname resolved through " + (hostnameSource == null ? "local name lookup" : hostnameSource) + ".");
+            if (!effectiveHostname.isEmpty()) {
+                evidence.put(hostname != null && !hostname.isEmpty()
+                        ? "Hostname resolved through " + (hostnameSource == null ? "reverse DNS" : hostnameSource) + "."
+                        : "Name supplied by the LANLink agent.");
             }
             if (!upnpManufacturer.isEmpty()) evidence.put("UPnP description reports manufacturer " + upnpManufacturer + ".");
             if (!upnpModel.isEmpty()) evidence.put("UPnP description reports model " + upnpModel + ".");
@@ -72,7 +78,11 @@ final class DeviceIdentity {
             String confidence;
             String method;
 
-            if (!upnpModel.isEmpty() || !upnpManufacturer.isEmpty()) {
+            if ("agent".equals(discoverySource)) {
+                type = "LANLink Android agent";
+                confidence = "high";
+                method = "local_agent";
+            } else if (!upnpModel.isEmpty() || !upnpManufacturer.isEmpty()) {
                 type = !upnpModel.isEmpty() ? "UPnP device · " + upnpModel : "UPnP device";
                 confidence = "high";
                 method = "upnp_description";
@@ -131,8 +141,10 @@ final class DeviceIdentity {
             }
 
             if (!serverProduct.isEmpty()) evidence.put("HTTP/RTSP server identifies as " + serverProduct + ".");
-            device.put("hostname", hostname == null || hostname.isEmpty() ? JSONObject.NULL : hostname);
-            device.put("hostname_source", hostnameSource == null || hostnameSource.isEmpty() ? JSONObject.NULL : hostnameSource);
+            device.put("hostname", effectiveHostname.isEmpty() ? JSONObject.NULL : effectiveHostname);
+            device.put("hostname_source", hostname != null && !hostname.isEmpty()
+                    ? (hostnameSource == null || hostnameSource.isEmpty() ? "reverse DNS" : hostnameSource)
+                    : ("agent".equals(discoverySource) ? "LANLink" : JSONObject.NULL));
             device.put("device_vendor", vendor.isEmpty() ? JSONObject.NULL : vendor);
             device.put("device_manufacturer", upnpManufacturer.isEmpty() ? JSONObject.NULL : upnpManufacturer);
             device.put("device_model", upnpModel.isEmpty() ? JSONObject.NULL : upnpModel);
