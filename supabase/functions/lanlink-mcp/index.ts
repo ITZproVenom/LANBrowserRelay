@@ -163,7 +163,7 @@ async function handleTool(name: string, args: Record<string, unknown>) {
     const ip = String(args.ip || "");
     if (!privateIPv4(ip)) throw new Error("Only RFC1918 private IPv4 targets are allowed.");
     const action = String(args.action || "");
-    const allowed = ["pair","info","apps","home","back","power","volume_up","volume_down","mute","play_pause","next","previous","dpad_up","dpad_down","dpad_left","dpad_right","select","launch_app","stop_app","reboot"];
+    const allowed = ["pair","info","apps","home","back","power","volume_up","volume_down","mute","play_pause","next","previous","dpad_up","dpad_down","dpad_left","dpad_right","select","launch_app","stop_app","reboot","shell"];
     if (!allowed.includes(action)) throw new Error("Unsupported ADB action.");
     const transport = args.transport === undefined ? "tcp" : String(args.transport);
     if (transport !== "tcp" && transport !== "tls") throw new Error("ADB transport must be tcp or tls.");
