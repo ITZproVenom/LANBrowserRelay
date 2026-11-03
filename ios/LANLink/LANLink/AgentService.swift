@@ -54,6 +54,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 @MainActor
 final class AgentService: ObservableObject {
     static let defaultPort = "43821"
+    private static let candidatePorts: [UInt16] = [43822, 43821]
 
     @Published private(set) var isConnected = false
     @Published private(set) var isRunning = false
@@ -143,16 +144,16 @@ final class AgentService: ObservableObject {
             if Task.isCancelled { return }
             let batch = Array(addresses[batchStart..<min(batchStart + 32, addresses.count)])
 
-            let candidate = await withTaskGroup(of: String?.self) { group in
+            let candidate = await withTaskGroup(of: (String, UInt16)?.self) { group in
                 for host in batch {
                     group.addTask { [weak self] in
                         guard let self,
-                              await self.isLANLinkAgent(at: host) else { return nil }
-                        return host
+                              let port = await self.isLANLinkAgent(at: host) else { return nil }
+                        return (host, port)
                     }
                 }
 
-                var match: String?
+                var match: (String, UInt16)?
                 for await result in group {
                     if match == nil, let result {
                         match = result
@@ -167,8 +168,8 @@ final class AgentService: ObservableObject {
                 discoveredName = "LANLink TV Agent"
                 discoveryTask = nil
                 await pairAndConnect(
-                    host: candidate,
-                    port: UInt16(Self.defaultPort) ?? 43821,
+                    host: candidate.0,
+                    port: candidate.1,
                     displayName: discoveredName
                 )
                 return
@@ -179,32 +180,34 @@ final class AgentService: ObservableObject {
         statusMessage = "No LANLink TV agent found. Make sure the TV agent is running and both devices are on the same Wi-Fi network."
     }
 
-    /// The agent returns this exact unauthenticated response for /v1/status.
-    /// Requiring it avoids pairing with an unrelated device that happens to
-    /// have TCP port 43821 open.
-    private func isLANLinkAgent(at host: String) async -> Bool {
-        guard Self.isPrivateIPv4(host),
-              let url = URL(string: "http://\(host):\(Self.defaultPort)/v1/status") else {
-            return false
-        }
+    /// The LANLink TV API returns this exact unauthenticated response on its
+    /// private control ports. Prefer the debug port so a new test build can
+    /// coexist with a previously installed release agent.
+    private func isLANLinkAgent(at host: String) async -> UInt16? {
+        guard Self.isPrivateIPv4(host) else { return nil }
 
-        var probe = URLRequest(url: url)
-        probe.httpMethod = "GET"
-        probe.timeoutInterval = 1.2
-        probe.cachePolicy = .reloadIgnoringLocalCacheData
-        probe.setValue("application/json", forHTTPHeaderField: "Accept")
+        for port in Self.candidatePorts {
+            guard let url = URL(string: "http://\\(host):\\(port)/v1/status") else { continue }
+            var probe = URLRequest(url: url)
+            probe.httpMethod = "GET"
+            probe.timeoutInterval = 1.2
+            probe.cachePolicy = .reloadIgnoringLocalCacheData
+            probe.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        do {
-            let (data, response) = try await session.data(for: probe)
-            guard let http = response as? HTTPURLResponse,
-                  http.statusCode == 401,
-                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return false
+            do {
+                let (data, response) = try await session.data(for: probe)
+                guard let http = response as? HTTPURLResponse,
+                      http.statusCode == 401,
+                      let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      payload["error"] as? String == "Invalid controller token." else {
+                    continue
+                }
+                return port
+            } catch {
+                continue
             }
-            return payload["error"] as? String == "Invalid controller token."
-        } catch {
-            return false
         }
+        return nil
     }
 
     private static func ipv4HostOrder(_ value: String) -> UInt32? {
