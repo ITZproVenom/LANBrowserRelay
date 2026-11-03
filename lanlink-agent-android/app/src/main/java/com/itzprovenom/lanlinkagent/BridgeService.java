@@ -657,7 +657,7 @@ public final class BridgeService extends Service {
         self.put("mac", arpBefore.containsKey(lan.ip) ? arpBefore.get(lan.ip) : JSONObject.NULL);
         self.put("services", new JSONArray());
         self.put("discovery_source", "agent");
-        self.put("tcp_confirmed", true);
+        self.put("tcp_confirmed", false);
         devices.put(self);
         foundIps.add(lan.ip);
 
@@ -744,7 +744,7 @@ public final class BridgeService extends Service {
         result.put("subnet", lan.subnet());
         result.put("bridge_ip", lan.ip);
         result.put("device_count", devices.length());
-        result.put("tcp_confirmed_count", tcpConfirmedHosts + 1);
+        result.put("tcp_confirmed_count", tcpConfirmedHosts);
         result.put("arp_only_count", arpOnlyHosts);
         result.put("arp_preexisting_count", preexistingArpOnlyHosts);
         result.put("arp_new_count", newlyLearnedArpOnlyHosts);
@@ -763,7 +763,8 @@ public final class BridgeService extends Service {
         summary.put("hosts_completed", completedHosts);
         summary.put("hosts_timed_out", timedOutHosts);
         summary.put("device_count_total", devices.length());
-        summary.put("tcp_confirmed_count_including_tv", tcpConfirmedHosts + 1);
+        summary.put("tcp_confirmed_count", tcpConfirmedHosts);
+        summary.put("agent_entries", 1);
         summary.put("arp_only_count", arpOnlyHosts);
         summary.put("arp_preexisting_count", preexistingArpOnlyHosts);
         summary.put("arp_new_count", newlyLearnedArpOnlyHosts);
@@ -772,7 +773,7 @@ public final class BridgeService extends Service {
         summary.put("duration_ms", duration);
         recordDiagnostic("INFO", "scan.completed", "LAN scan completed.", summary);
         addActivity("LAN scan complete",
-                devices.length() + " entries: " + (tcpConfirmedHosts + 1) + " TCP-confirmed, "
+                devices.length() + " entries: " + tcpConfirmedHosts + " TCP-confirmed, "
                         + arpOnlyHosts + " ARP-only; " + duration + " ms.", false);
         return result;
     }
