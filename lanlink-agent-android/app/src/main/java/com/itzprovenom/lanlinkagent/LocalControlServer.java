@@ -177,7 +177,7 @@ final class LocalControlServer {
         while (out.size() <= limit) {
             int value = input.read();
             if (value == -1) return out.size() == 0 ? null : out.toString("UTF-8");
-            if (previous == '\\r' && value == '\\n') {
+            if (previous == '\r' && value == '\n') {
                 byte[] bytes = out.toByteArray();
                 return new String(bytes, 0, Math.max(0, bytes.length - 1), StandardCharsets.US_ASCII);
             }
