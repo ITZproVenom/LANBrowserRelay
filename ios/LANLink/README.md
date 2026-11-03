@@ -5,7 +5,7 @@ LANLink turns an iPhone on the local Wi-Fi network into the LAN agent for the LA
 ## Requirements
 
 - Xcode 16 or newer
-- iOS 16 or newer
+- iOS 17 or newer
 - iPhone connected to a private Wi-Fi network
 - An enabled LANLink agent token for this iPhone
 
