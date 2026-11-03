@@ -228,6 +228,13 @@ private struct ActivityView: View {
 private struct SettingsView: View {
     @EnvironmentObject private var agent: AgentService
     @State private var saved = false
+    @State private var showToken = false
+    @FocusState private var focusedField: InputField?
+
+    private enum InputField: Hashable {
+        case relay
+        case token
+    }
 
     var body: some View {
         NavigationStack {
@@ -237,20 +244,62 @@ private struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
-                    SecureField("iPhone agent token", text: $agent.agentToken)
+                        .textFieldStyle(.plain)
+                        .focused($focusedField, equals: .relay)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .token }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+
+                    HStack(spacing: 10) {
+                        Group {
+                            if showToken {
+                                TextField("iPhone agent token", text: $agent.agentToken)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedField, equals: .token)
+                                    .textContentType(.password)
+                                    .accessibilityLabel("iPhone agent token")
+                            } else {
+                                SecureField("iPhone agent token", text: $agent.agentToken)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedField, equals: .token)
+                                    .textContentType(.password)
+                                    .accessibilityLabel("iPhone agent token")
+                            }
+                        }
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit { focusedField = nil }
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+
+                        Button {
+                            showToken.toggle()
+                            focusedField = .token
+                        } label: {
+                            Image(systemName: showToken ? "eye.slash" : "eye")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, height: 40)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(showToken ? "Hide agent token" : "Show agent token")
+                    }
+
                     HStack {
                         Button("Use default") {
                             agent.relayEndpoint = AgentService.defaultRelay
+                            focusedField = nil
                         }
                         Spacer()
                         Button("Save settings") {
+                            focusedField = nil
                             saved = agent.saveSettings()
                         }
                         .fontWeight(.semibold)
                     }
-                    Text("Accepts the function URL with a trailing slash or /mcp suffix.")
+                    Text("Tap either field to edit. The token is saved in iOS Keychain. Accepts a trailing slash or /mcp suffix.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -276,7 +325,14 @@ private struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                }
+            }
             .alert("Settings saved", isPresented: $saved) {
                 Button("Done", role: .cancel) { }
             } message: {
