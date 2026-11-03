@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import CoreLocation
 import Darwin
 
 private final class DenyRedirects: NSObject, URLSessionTaskDelegate {
@@ -21,7 +22,7 @@ struct ActivityEntry: Identifiable {
 }
 
 @MainActor
-final class AgentService: ObservableObject {
+final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let defaultRelay = "https://odihwrrcgchtqohrgtdb.supabase.co/functions/v1/lanlink-mcp"
 
     @Published var relayEndpoint: String
@@ -33,7 +34,12 @@ final class AgentService: ObservableObject {
     @Published private(set) var activity: [ActivityEntry] = []
     @Published private(set) var lastContact: Date?
     @Published var statusMessage = "Set your agent token to connect LANLink."
+    @Published private(set) var locationStatusMessage = "Location-assisted background mode is off."
+    @Published private(set) var lastLocationUpdate: Date?
+    @Published private(set) var isReceivingBackgroundLocation = false
+    @Published var backgroundLocationEnabled: Bool
 
+    private let locationManager = CLLocationManager()
     private var pollTask: Task<Void, Never>?
 
     init() {
@@ -41,6 +47,20 @@ final class AgentService: ObservableObject {
         relayEndpoint = Self.normalizedRelayEndpoint(storedEndpoint) ?? Self.defaultRelay
         agentToken = SecureStore.read(account: "agent-token") ?? ""
         localAddress = LocalNetworkAgent.interfaceInfo()?.address ?? "Not connected"
+        backgroundLocationEnabled = UserDefaults.standard.bool(forKey: "backgroundLocationEnabled")
+        super.init()
+
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.activityType = .other
+        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.showsBackgroundLocationIndicator = true
+
+        if backgroundLocationEnabled {
+            locationStatusMessage = "Enabled. Start the bridge to begin the location session."
+        }
     }
 
     /// Accepts the Supabase Function URL with or without a trailing slash or the
@@ -97,9 +117,12 @@ final class AgentService: ObservableObject {
         guard !isRunning else { return }
 
         isRunning = true
-        statusMessage = "Bridge active while LANLink stays open."
+        statusMessage = "Bridge active."
         localAddress = LocalNetworkAgent.interfaceInfo()?.address ?? "Not connected"
         addActivity("Bridge started", "This iPhone is now polling the LANLink relay.", failed: false)
+        if backgroundLocationEnabled {
+            startLocationBackgroundSession()
+        }
         pollTask = Task {
             while !Task.isCancelled {
                 do {
@@ -126,13 +149,99 @@ final class AgentService: ObservableObject {
             addActivity("Bridge stopped", "Relay polling has stopped.", failed: false)
         }
         isRunning = false
+        locationManager.stopUpdatingLocation()
+        isReceivingBackgroundLocation = false
+        if backgroundLocationEnabled {
+            locationStatusMessage = "Bridge stopped. Location updates have stopped too."
+        }
         statusMessage = "Bridge stopped."
     }
 
+    /// Opt-in Core Location session. The session is only active while the LAN bridge is running.
+    /// The app does not store or upload latitude/longitude; it records update timestamps only.
+    func setBackgroundLocationMode(_ enabled: Bool) {
+        backgroundLocationEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "backgroundLocationEnabled")
+
+        guard enabled else {
+            locationManager.stopUpdatingLocation()
+            isReceivingBackgroundLocation = false
+            locationStatusMessage = "Location-assisted background mode is off."
+            addActivity("Background location disabled", "Location updates stopped.", failed: false)
+            return
+        }
+
+        guard isRunning else {
+            locationStatusMessage = "Enabled. Start the bridge to request location permission and begin updates."
+            return
+        }
+        startLocationBackgroundSession()
+    }
+
+    private func startLocationBackgroundSession() {
+        guard CLLocationManager.locationServicesEnabled() else {
+            locationStatusMessage = "iPhone Location Services are turned off."
+            return
+        }
+
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.showsBackgroundLocationIndicator = true
+
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationStatusMessage = "Allow While Using App when iOS asks for location permission."
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            locationManager.startUpdatingLocation()
+            isReceivingBackgroundLocation = true
+            locationStatusMessage = "Location updates active. The blue location indicator may appear when LANLink is in the background."
+            addActivity("Background location session started", "Core Location updates enabled for this bridge session.", failed: false)
+        case .denied:
+            isReceivingBackgroundLocation = false
+            locationStatusMessage = "Location permission is denied. Enable it in iOS Settings to use this mode."
+        case .restricted:
+            isReceivingBackgroundLocation = false
+            locationStatusMessage = "Location access is restricted on this iPhone."
+        @unknown default:
+            isReceivingBackgroundLocation = false
+            locationStatusMessage = "Location authorization status is unavailable."
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard backgroundLocationEnabled, isRunning else { return }
+        startLocationBackgroundSession()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard !locations.isEmpty else { return }
+        lastLocationUpdate = Date()
+        isReceivingBackgroundLocation = true
+        locationStatusMessage = "Receiving location updates. Coordinates are not stored or sent to the relay."
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        isReceivingBackgroundLocation = false
+        locationStatusMessage = "Location update error: \\(error.localizedDescription)"
+    }
+
     func handleScenePhase(_ phase: ScenePhase) {
-        if phase != .active && isRunning {
-            stop()
-            statusMessage = "Paused because iOS moved LANLink to the background. Reopen the app to resume."
+        guard isRunning else { return }
+        switch phase {
+        case .active:
+            statusMessage = "Bridge active."
+            if backgroundLocationEnabled {
+                startLocationBackgroundSession()
+            }
+        case .inactive, .background:
+            if backgroundLocationEnabled && isReceivingBackgroundLocation {
+                statusMessage = "Bridge background session active. iOS location updates are enabled."
+            } else {
+                statusMessage = "Bridge active, but iOS may suspend relay polling in the background. Enable location-assisted mode for background location execution."
+            }
+        @unknown default:
+            break
         }
     }
 
