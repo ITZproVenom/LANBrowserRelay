@@ -18,6 +18,13 @@ import android.os.IBinder;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -50,6 +57,13 @@ public final class BridgeService extends Service {
     static final String RELAY_BASE = "https://odihwrrcgchtqohrgtdb.supabase.co/functions/v1/lanlink-mcp";
     private static final String CHANNEL = "lanlink_bridge";
     private static final int NOTIFICATION_ID = 7441;
+    private static final OkHttpClient LOCAL_HTTP_CLIENT = new OkHttpClient.Builder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .writeTimeout(8, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build();
     private static final int[] PORTS = {
             21, 22, 23, 53, 80, 81, 139, 443, 445, 515,
             554, 631, 1883, 3389, 5000, 5001, 5555, 5900, 7000, 8008,
@@ -237,13 +251,36 @@ public final class BridgeService extends Service {
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
+    private String agentVersion() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            if (info.versionName != null && !info.versionName.trim().isEmpty()) return info.versionName;
+        } catch (Exception ignored) {}
+        return "0.3.3";
+    }
+
+    private void publishAgentCapabilities(long now) throws Exception {
+        if (now - lastAgentMetadataHeartbeat < 60_000L) return;
+        JSONObject heartbeat = new JSONObject();
+        heartbeat.put("version", agentVersion());
+        JSONArray capabilities = new JSONArray();
+        capabilities.put("network-discovery");
+        capabilities.put("tcp-probe");
+        capabilities.put("http");
+        capabilities.put("wake-on-lan");
+        heartbeat.put("capabilities", capabilities);
+        request("/agent/heartbeat", "POST", heartbeat);
+        lastAgentMetadataHeartbeat = now;
+    }
+
     private void loop() {
         while (running.get()) {
             try {
+                long now = System.currentTimeMillis();
+                publishAgentCapabilities(now);
                 JSONObject response = request("/agent/poll", "GET", null);
                 lastRelayContact = System.currentTimeMillis();
                 lastRelayError = "";
-                long now = System.currentTimeMillis();
                 if (now - lastDiagnosticHeartbeat >= 60_000L) {
                     lastDiagnosticHeartbeat = now;
                     JSONObject heartbeat = new JSONObject();
@@ -895,44 +932,98 @@ public final class BridgeService extends Service {
         String ip = p.optString("ip", "");
         Lan lan = localLan();
         if (!privateIp(ip) || !lan.contains(ip)) throw new IllegalArgumentException("HTTP target must be on the TV's local subnet.");
+
         int port = p.optInt("port", 0);
         if (port < 1 || port > 65535) throw new IllegalArgumentException("Invalid TCP port.");
         String scheme = p.optString("scheme", "http");
         if (!"http".equals(scheme) && !"https".equals(scheme)) throw new IllegalArgumentException("Invalid URL scheme.");
-        String method = p.optString("method", "GET").toUpperCase();
-        if (!java.util.Arrays.asList("GET","HEAD","POST","PUT","DELETE").contains(method)) throw new IllegalArgumentException("HTTP method is not allowed.");
+
+        String method = p.optString("method", "GET").toUpperCase(java.util.Locale.ROOT);
+        if (!java.util.Arrays.asList("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS").contains(method)) {
+            throw new IllegalArgumentException("HTTP method is not allowed.");
+        }
+
         String path = p.optString("path", "/");
-        if (!path.startsWith("/") || path.startsWith("//") || path.contains("\\\\") || path.contains("\\r") || path.contains("\\n") || path.length() > 2048 || java.util.Arrays.asList(path.split("/")).contains("..")) throw new IllegalArgumentException("Unsafe request path.");
+        if (!path.startsWith("/") || path.startsWith("//") || path.indexOf((char) 92) >= 0
+                || path.indexOf((char) 13) >= 0 || path.indexOf((char) 10) >= 0 || path.length() > 2048) {
+            throw new IllegalArgumentException("Unsafe request path.");
+        }
+        for (String segment : path.split("/", -1)) {
+            if ("..".equals(segment)) throw new IllegalArgumentException("Unsafe request path.");
+        }
+
         String body = p.optString("body", "");
-        if (body.getBytes(StandardCharsets.UTF_8).length > 16384) throw new IllegalArgumentException("Request body is too large.");
+        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+        if (bodyBytes.length > 256000) throw new IllegalArgumentException("Request body exceeds 256 KB.");
+
         String contentType = p.optString("content_type", "application/json");
-        if (!java.util.Arrays.asList("application/json","text/plain","application/x-www-form-urlencoded").contains(contentType)) throw new IllegalArgumentException("Content-Type not allowed.");
-        String endpoint = scheme + "://" + ip + ":" + port + path;
-        HttpURLConnection c = (HttpURLConnection) new URL(endpoint).openConnection();
-        c.setRequestMethod(method);
-        c.setInstanceFollowRedirects(false);
-        c.setConnectTimeout(6000); c.setReadTimeout(8000);
-        c.setRequestProperty("Accept", "application/json, text/plain, */*");
-        c.setRequestProperty("Content-Type", contentType);
-        c.setRequestProperty("User-Agent", "LANLink-TV-Agent/0.1.0");
-        if (!body.isEmpty() && !("GET".equals(method) || "HEAD".equals(method))) {
-            c.setDoOutput(true);
-            try (OutputStream out = c.getOutputStream()) { out.write(body.getBytes(StandardCharsets.UTF_8)); }
+        if (!java.util.Arrays.asList("application/json", "text/plain", "application/xml", "text/xml",
+                "application/soap+xml", "application/x-www-form-urlencoded").contains(contentType)) {
+            throw new IllegalArgumentException("Content-Type not allowed.");
         }
-        int code = c.getResponseCode();
-        InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-        String response = in == null ? "" : readLimited(in, 200000);
-        JSONObject result = new JSONObject();
-        result.put("target", endpoint); result.put("status", code);
-        result.put("body", response);
-        JSONObject headers = new JSONObject();
-        for (String h : new String[]{"Content-Type","Server","WWW-Authenticate","Location"}) {
-            String v = c.getHeaderField(h);
-            if (v != null) headers.put(h.toLowerCase(), v.length() > 500 ? v.substring(0,500) : v);
+
+        JSONObject headers = p.optJSONObject("headers");
+        if (headers == null) headers = new JSONObject();
+        if (headers.length() > 12) throw new IllegalArgumentException("At most 12 custom headers are allowed.");
+        java.util.Set<String> forbiddenHeaders = new java.util.HashSet<>(java.util.Arrays.asList(
+                "host", "connection", "content-length", "transfer-encoding", "proxy-authorization", "proxy-connection"));
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(scheme + "://" + ip + ":" + port + path)
+                .header("User-Agent", "LANLink-TV-Agent/" + agentVersion())
+                .header("Accept", "application/json, text/plain, */*");
+        java.util.Iterator<String> headerNames = headers.keys();
+        while (headerNames.hasNext()) {
+            String name = headerNames.next();
+            Object rawValue = headers.opt(name);
+            if (name == null || !name.matches("[A-Za-z0-9-]{1,64}")
+                    || forbiddenHeaders.contains(name.toLowerCase(java.util.Locale.ROOT))
+                    || !(rawValue instanceof String)) {
+                throw new IllegalArgumentException("Unsafe or invalid HTTP header.");
+            }
+            String value = (String) rawValue;
+            if (value.length() > 2048 || value.indexOf((char) 13) >= 0 || value.indexOf((char) 10) >= 0) {
+                throw new IllegalArgumentException("Unsafe or invalid HTTP header.");
+            }
+            requestBuilder.header(name, value);
         }
-        result.put("headers", headers);
-        c.disconnect();
-        return result;
+
+        boolean hasUsername = p.has("username") && !p.isNull("username");
+        boolean hasPassword = p.has("password") && !p.isNull("password");
+        if (hasUsername != hasPassword) throw new IllegalArgumentException("Supply both HTTP username and password.");
+        if (hasUsername) {
+            String username = p.optString("username", "");
+            String password = p.optString("password", "");
+            if (username.length() > 128 || password.length() > 256) throw new IllegalArgumentException("HTTP credentials exceed allowed limits.");
+            String credentials = android.util.Base64.encodeToString(
+                    (username + ":" + password).getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
+            requestBuilder.header("Authorization", "Basic " + credentials);
+        }
+
+        RequestBody requestBody = null;
+        boolean methodRequiresBody = "POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method);
+        if (methodRequiresBody || ("DELETE".equals(method) && bodyBytes.length > 0)) {
+            requestBody = RequestBody.create(MediaType.parse(contentType), bodyBytes);
+        } else if (bodyBytes.length > 0) {
+            throw new IllegalArgumentException("This HTTP method does not accept a request body.");
+        }
+
+        Request request = requestBuilder.method(method, requestBody).build();
+        try (Response response = LOCAL_HTTP_CLIENT.newCall(request).execute()) {
+            ResponseBody responseBody = response.body();
+            String responseText = responseBody == null ? "" : readLimited(responseBody.byteStream(), 200000);
+            JSONObject result = new JSONObject();
+            result.put("target", scheme + "://" + ip + ":" + port + path);
+            result.put("status", response.code());
+            result.put("body", responseText);
+            JSONObject responseHeaders = new JSONObject();
+            for (String headerName : new String[]{"Content-Type", "Server", "WWW-Authenticate", "Location"}) {
+                String value = response.header(headerName);
+                if (value != null) responseHeaders.put(headerName.toLowerCase(java.util.Locale.ROOT),
+                        value.length() > 500 ? value.substring(0, 500) : value);
+            }
+            result.put("headers", responseHeaders);
+            return result;
+        }
     }
 
     private JSONObject wakeOnLan(JSONObject p) throws Exception {
