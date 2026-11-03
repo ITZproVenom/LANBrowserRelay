@@ -7,6 +7,8 @@ struct ControllerDevice: Identifiable, Hashable {
     let hostname: String?
     let mac: String?
     let services: [String]
+    let discoverySource: String
+    let tcpConfirmed: Bool
     var id: String { ip }
 }
 
@@ -611,7 +613,9 @@ final class AgentService: ObservableObject {
                 ip: ip,
                 hostname: hostnameValue == "null" ? nil : hostnameValue,
                 mac: macValue == "null" ? nil : macValue,
-                services: services
+                services: services,
+                discoverySource: item["discovery_source"] as? String ?? "unknown",
+                tcpConfirmed: item["tcp_confirmed"] as? Bool ?? !services.isEmpty
             )
         }.sorted { $0.ip.localizedStandardCompare($1.ip) == .orderedAscending }
     }
