@@ -77,7 +77,7 @@ public final class BridgeService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         createChannel();
-        startForeground(NOTIFICATION_ID, notification("Waiting for bridge token"));
+        startForeground(NOTIFICATION_ID, notification("Starting LANLink local controller…"));
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -297,7 +297,8 @@ public final class BridgeService extends Service {
         Lan lan = localLan();
         JSONObject result = new JSONObject();
         result.put("app", "LANLink TV Agent");
-        result.put("version", "0.2.0");
+        result.put("version", "0.3.0");
+        result.put("controller_paired", !SecureStore.readControllerToken(this).isEmpty());
         result.put("bridge_ip", lan.ip);
         result.put("subnet", lan.subnet());
         result.put("controller_port", LocalControlServer.PORT);
