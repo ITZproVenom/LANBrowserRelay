@@ -50,9 +50,17 @@ public final class BridgeService extends Service {
     private static final int NOTIFICATION_ID = 7441;
     private static final int[] PORTS = {22, 23, 53, 80, 443, 554, 5555, 8008, 8009, 8080, 8443, 9000};
     private static final String[] NAMES = {"ssh","telnet","dns","http","https","rtsp","adb","http-alt","cast","http-alt","https-alt","http-alt"};
+    static final String ACTION_STOP_RELAY = "com.itzprovenom.lanlinkagent.STOP_RELAY";
+    static final String ACTION_START_RELAY = "com.itzprovenom.lanlinkagent.START_RELAY";
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService worker;
     private String token = "";
+    private LocalControlServer controlServer;
+    private volatile long lastRelayContact = 0L;
+    private volatile String lastRelayError = "";
+    private volatile JSONObject lastDiscoveryResult = new JSONObject();
+    private final JSONArray recentActivity = new JSONArray();
 
     @Override public void onCreate() {
         super.onCreate();
@@ -61,21 +69,78 @@ public final class BridgeService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_STOP_RELAY.equals(intent.getAction())) {
+            stopRelayLoop();
+            return START_STICKY;
+        }
+        if (intent != null && ACTION_START_RELAY.equals(intent.getAction())) {
+            token = SecureStore.read(this);
+            startRelayLoop();
+            return START_STICKY;
+        }
+
         token = SecureStore.read(this);
         if (token.isEmpty()) {
-            stopSelf();
+            updateNotification("Missing relay agent token");
             return START_NOT_STICKY;
         }
-        if (running.compareAndSet(false, true)) {
-            worker = Executors.newSingleThreadExecutor();
-            worker.execute(this::loop);
+
+        String controllerToken = SecureStore.readControllerToken(this);
+        if (controllerToken.isEmpty()) {
+            controllerToken = createControllerToken();
+            SecureStore.writeControllerToken(this, controllerToken);
         }
+        if (controlServer == null) {
+            try {
+                controlServer = new LocalControlServer(this, controllerToken);
+                controlServer.start();
+                addActivity("Controller ready", "Authenticated local controller listening on port " + LocalControlServer.PORT + ".", false);
+            } catch (Exception e) {
+                controlServer = null;
+                updateNotification("Local controller failed: " + safe(e.getMessage()));
+            }
+        }
+
+        startRelayLoop();
         return START_STICKY;
     }
 
+    private String createControllerToken() {
+        byte[] bytes = new byte[32];
+        new java.security.SecureRandom().nextBytes(bytes);
+        return android.util.Base64.encodeToString(bytes,
+                android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
+    }
+
+    private synchronized void startRelayLoop() {
+        if (token.isEmpty()) token = SecureStore.read(this);
+        if (token.isEmpty()) {
+            lastRelayError = "Missing relay agent token.";
+            return;
+        }
+        if (!running.compareAndSet(false, true)) return;
+        worker = Executors.newSingleThreadExecutor();
+        worker.execute(this::loop);
+        addActivity("Relay started", "Android TV agent is polling the LANLink relay.", false);
+        updateNotification("Bridge active • controller port " + LocalControlServer.PORT);
+    }
+
+    private synchronized void stopRelayLoop() {
+        if (!running.compareAndSet(true, false)) return;
+        if (worker != null) {
+            worker.shutdownNow();
+            worker = null;
+        }
+        addActivity("Relay stopped", "Remote controller remains available on the LAN.", false);
+        updateNotification("Controller ready • relay paused");
+    }
+
     @Override public void onDestroy() {
-        running.set(false);
-        if (worker != null) worker.shutdownNow();
+        stopRelayLoop();
+        if (controlServer != null) {
+            controlServer.stop();
+            controlServer = null;
+        }
         stopForeground(true);
         super.onDestroy();
     }
@@ -86,6 +151,8 @@ public final class BridgeService extends Service {
         while (running.get()) {
             try {
                 JSONObject response = request("/agent/poll", "GET", null);
+                lastRelayContact = System.currentTimeMillis();
+                lastRelayError = "";
                 JSONArray commands = response.optJSONArray("commands");
                 if (commands != null) {
                     for (int i = 0; i < commands.length() && running.get(); i++) {
@@ -94,7 +161,8 @@ public final class BridgeService extends Service {
                     }
                 }
             } catch (Exception e) {
-                updateNotification("Relay unavailable: " + safe(e.getMessage()));
+                lastRelayError = safe(e.getMessage());
+                updateNotification("Relay unavailable: " + lastRelayError);
             }
             try { Thread.sleep(3000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
@@ -110,6 +178,7 @@ public final class BridgeService extends Service {
             JSONObject report = new JSONObject();
             if ("discover".equals(kind)) {
                 result = discover();
+                cacheDiscovery(result);
                 report.put("devices", result.optJSONArray("devices"));
             } else if ("probe".equals(kind)) {
                 result = probe(payload.optString("ip", ""));
@@ -135,6 +204,124 @@ public final class BridgeService extends Service {
             } catch (Exception ignored) {}
             updateNotification("Task failed: " + safe(e.getMessage()));
         }
+    }
+
+    boolean isAllowedControllerClient(InetAddress remote) {
+        try {
+            if (!privateIp(remote.getHostAddress())) return false;
+            return localLan().contains(remote.getHostAddress());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    void updateLocalApiStatus(String message) {
+        lastRelayError = safe(message);
+    }
+
+    synchronized JSONObject controlStatus() throws Exception {
+        Lan lan = localLan();
+        JSONObject result = new JSONObject();
+        result.put("app", "LANLink TV Agent");
+        result.put("version", "0.2.0");
+        result.put("bridge_ip", lan.ip);
+        result.put("subnet", lan.subnet());
+        result.put("controller_port", LocalControlServer.PORT);
+        result.put("relay_running", running.get());
+        result.put("relay_connected", lastRelayContact > 0 && System.currentTimeMillis() - lastRelayContact < 30_000L);
+        result.put("last_relay_contact", lastRelayContact);
+        result.put("last_error", lastRelayError);
+        result.put("device_count", lastDiscoveryResult.optInt("device_count", 0));
+        return result;
+    }
+
+    synchronized JSONObject controlDevices() {
+        JSONObject result = new JSONObject();
+        try {
+            result.put("devices", lastDiscoveryResult.optJSONArray("devices") == null
+                    ? new JSONArray() : lastDiscoveryResult.optJSONArray("devices"));
+            result.put("subnet", lastDiscoveryResult.optString("subnet", ""));
+            result.put("device_count", lastDiscoveryResult.optInt("device_count", 0));
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    synchronized JSONObject controlActivity() {
+        JSONObject result = new JSONObject();
+        try { result.put("events", new JSONArray(recentActivity.toString())); }
+        catch (Exception ignored) { try { result.put("events", new JSONArray()); } catch (Exception ignoredAgain) {} }
+        return result;
+    }
+
+    JSONObject controlScan() throws Exception {
+        JSONObject result = discover();
+        cacheDiscovery(result);
+        addActivity("LAN scan complete", "Found " + result.optInt("device_count", 0) + " responding or ARP-known devices.", false);
+        return result;
+    }
+
+    JSONObject controlStartBridge() {
+        startRelayLoop();
+        JSONObject result = new JSONObject();
+        try {
+            result.put("ok", true);
+            result.put("relay_running", running.get());
+            result.put("message", "Relay polling requested.");
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    JSONObject controlStopBridge() {
+        stopRelayLoop();
+        JSONObject result = new JSONObject();
+        try {
+            result.put("ok", true);
+            result.put("relay_running", running.get());
+            result.put("message", "Relay paused. Local controller remains available.");
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    JSONObject controlCommand(JSONObject command) throws Exception {
+        String kind = command.optString("kind", "");
+        JSONObject payload = command.optJSONObject("payload");
+        if (payload == null) payload = new JSONObject();
+        JSONObject result;
+        if ("discover".equals(kind)) {
+            result = discover();
+            cacheDiscovery(result);
+        } else if ("probe".equals(kind)) {
+            result = probe(payload.optString("ip", ""));
+        } else if ("http".equals(kind)) {
+            result = httpRequest(payload);
+        } else if ("wol".equals(kind)) {
+            result = wakeOnLan(payload);
+        } else {
+            throw new IllegalArgumentException("Unsupported command kind: " + kind);
+        }
+        addActivity("Controller command", kind.toUpperCase(), false);
+        return result;
+    }
+
+    private synchronized void cacheDiscovery(JSONObject result) {
+        lastDiscoveryResult = result == null ? new JSONObject() : result;
+    }
+
+    private synchronized void addActivity(String title, String detail, boolean failed) {
+        try {
+            JSONObject event = new JSONObject();
+            event.put("title", title);
+            event.put("detail", safe(detail));
+            event.put("failed", failed);
+            event.put("timestamp", System.currentTimeMillis());
+            recentActivity.put(event);
+            while (recentActivity.length() > 100) {
+                JSONArray trimmed = new JSONArray();
+                for (int i = 1; i < recentActivity.length(); i++) trimmed.put(recentActivity.get(i));
+                recentActivity.replace(0, trimmed);
+                break;
+            }
+        } catch (Exception ignored) {}
     }
 
     private JSONObject request(String path, String method, JSONObject body) throws Exception {
