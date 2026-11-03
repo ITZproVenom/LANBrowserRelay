@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * in BridgeService, so iOS does not become a second LAN agent.
  */
 final class LocalControlServer {
-    static final int PORT = 43821;
+    static final int PORT = BuildConfig.LOCAL_CONTROL_PORT;
     private static final int MAX_HEADER_BYTES = 16_384;
     private static final int MAX_BODY_BYTES = 65_536;
 
