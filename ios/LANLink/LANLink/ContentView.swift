@@ -189,11 +189,13 @@ private struct DevicesView: View {
                                     Spacer()
                                     Text(device.ip).font(.caption.monospaced()).foregroundStyle(.secondary)
                                 }
-                                Text(device.tcpConfirmed
-                                     ? "TCP confirmed" + (device.services.isEmpty ? "" : " · " + device.services.joined(separator: "  ·  "))
-                                     : "ARP only · not TCP-confirmed")
+                                Text(device.discoverySource == "agent"
+                                     ? "LANLink Android agent"
+                                     : (device.tcpConfirmed
+                                        ? "TCP confirmed" + (device.services.isEmpty ? "" : " · " + device.services.joined(separator: "  ·  "))
+                                        : "ARP only · not TCP-confirmed"))
                                     .font(.caption)
-                                    .foregroundStyle(device.tcpConfirmed ? .green : .orange)
+                                    .foregroundStyle(device.discoverySource == "agent" ? .cyan : (device.tcpConfirmed ? .green : .orange))
                                 if let mac = device.mac {
                                     Text(mac.uppercased()).font(.caption2.monospaced()).foregroundStyle(.tertiary)
                                 }
