@@ -40,6 +40,7 @@ final class DeviceIdentity {
             String upnpManufacturer = firstServiceValue(services, "upnp_manufacturer");
             String upnpModel = firstServiceValue(services, "upnp_model");
             String friendlyName = firstServiceValue(services, "upnp_friendly_name");
+            if (friendlyName.isEmpty()) friendlyName = firstServiceValue(services, "title");
             String serverProduct = firstServiceValue(services, "server");
             JSONArray evidence = new JSONArray();
             JSONArray fingerprints = new JSONArray();
@@ -140,7 +141,7 @@ final class DeviceIdentity {
                 method = "service_evidence_only";
             }
 
-            if (!serverProduct.isEmpty()) evidence.put("HTTP/RTSP server identifies as " + serverProduct + ".");
+            if (!serverProduct.isEmpty()) evidence.put("Service banner identifies as " + serverProduct + ".");
             device.put("hostname", effectiveHostname.isEmpty() ? JSONObject.NULL : effectiveHostname);
             device.put("hostname_source", hostname != null && !hostname.isEmpty()
                     ? (hostnameSource == null || hostnameSource.isEmpty() ? "reverse DNS" : hostnameSource)
