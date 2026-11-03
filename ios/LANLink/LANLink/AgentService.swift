@@ -9,6 +9,18 @@ struct ControllerDevice: Identifiable, Hashable {
     let services: [String]
     let discoverySource: String
     let tcpConfirmed: Bool
+    let deviceType: String
+    let vendor: String?
+    let manufacturer: String?
+    let model: String?
+    let friendlyName: String?
+    let identityConfidence: String
+    let identityMethod: String
+    let hostnameSource: String?
+    let macAddressType: String
+    let vendorLookupSource: String
+    let identityEvidence: [String]
+    let serviceFingerprints: [String]
     var id: String { ip }
 }
 
@@ -615,7 +627,19 @@ final class AgentService: ObservableObject {
                 mac: macValue == "null" ? nil : macValue,
                 services: services,
                 discoverySource: item["discovery_source"] as? String ?? "unknown",
-                tcpConfirmed: item["tcp_confirmed"] as? Bool ?? !services.isEmpty
+                tcpConfirmed: item["tcp_confirmed"] as? Bool ?? !services.isEmpty,
+                deviceType: item["device_type"] as? String ?? "Unknown network device",
+                vendor: item["device_vendor"] as? String,
+                manufacturer: item["device_manufacturer"] as? String,
+                model: item["device_model"] as? String,
+                friendlyName: item["device_friendly_name"] as? String,
+                identityConfidence: item["identity_confidence"] as? String ?? "low",
+                identityMethod: item["identity_method"] as? String ?? "service_evidence_only",
+                hostnameSource: item["hostname_source"] as? String,
+                macAddressType: item["mac_address_type"] as? String ?? "unavailable",
+                vendorLookupSource: item["vendor_lookup_source"] as? String ?? "unknown",
+                identityEvidence: item["identity_evidence"] as? [String] ?? [],
+                serviceFingerprints: item["service_fingerprints"] as? [String] ?? []
             )
         }.sorted { $0.ip.localizedStandardCompare($1.ip) == .orderedAscending }
     }
