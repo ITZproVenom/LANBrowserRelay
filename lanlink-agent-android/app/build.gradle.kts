@@ -9,7 +9,7 @@ android {
     defaultConfig {
         applicationId = "com.itzprovenom.lanlinkagent"
         minSdk = 23
-        targetSdk = 28
+        targetSdk = 35
         versionCode = 100
         versionName = "0.1.0"
     }
