@@ -59,8 +59,8 @@ const contentServer = await makeServer(async (req, res) => {
           .catch(() => window.attackResults.statusApi = 'blocked');
         fetch('http://127.0.0.1:${portOf(uiServer)}/api/cancel', {method:'POST', mode:'no-cors', credentials:'include',
           headers:{'Content-Type':'text/plain'}, body:'id=victim'})
-          .then(() => window.attackResults.cancelAttempt = 'sent')
-          .catch(() => window.attackResults.cancelAttempt = 'blocked');
+          .then(() => { window.attackResults.cancelAttempt = 'sent'; document.body.dataset.attackReady = 'yes'; })
+          .catch(() => { window.attackResults.cancelAttempt = 'blocked'; document.body.dataset.attackReady = 'yes'; });
         fetch('http://127.0.0.1:${portOf(uiServer)}/api/download', {method:'POST', mode:'no-cors', credentials:'include',
           headers:{'Content-Type':'text/plain'}, body:'url=https%3A%2F%2Fexample.com%2Ffile.zip'})
           .catch(() => {});
@@ -127,7 +127,7 @@ try {
   await page.locator('#navform button.go').click();
   const frame = page.frames().find(item => item.url().startsWith(`http://127.0.0.1:${contentPort}/browse`));
   assert.ok(frame, 'proxied page must load from the distinct content port');
-  await frame.waitForFunction(() => window.attackResults && window.attackResults.cancelAttempt);
+  await frame.locator('body[data-attack-ready="yes"]').waitFor();
   const results = await frame.evaluate(() => window.attackResults);
   assert.equal(results.parentRead, 'blocked', 'hostile frame must not read or mutate the parent DOM');
   assert.ok(!results.frameCookie.includes('lbr_session'), 'hostile frame must not read the HttpOnly session cookie');
@@ -141,7 +141,15 @@ try {
   assert.equal(counters.authorizedControl, 0, 'hostile content must not trigger any control action');
   assert.ok(counters.deniedControl > 0, 'hostile state-changing requests should be rejected');
   await frame.locator('#legit-link').click();
-  await page.waitForFunction(() => document.querySelector('#address')?.value === 'https://example.net/legit');
+  let legitimateNavigation = false;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (await page.locator('#address').inputValue() === 'https://example.net/legit') {
+      legitimateNavigation = true;
+      break;
+    }
+    await page.waitForTimeout(50);
+  }
+  assert.equal(legitimateNavigation, true, 'trusted bridge must complete navigation after a real link click');
   assert.equal(await page.locator('#address').inputValue(), 'https://example.net/legit', 'trusted bridge must still navigate on a real link click');
   console.log('PASS: hostile HTML cannot forge navigation or invoke relay controls; legitimate link clicks still work', JSON.stringify(counters));
 } finally {
