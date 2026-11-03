@@ -39,5 +39,5 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("io.github.rhythmcache:adb-kt:1.0.0")
+    implementation("com.github.rhythmcache.adb-kt:lib:394dea235b4bfb2ebbfba5a821bbe4f6cd59e460")
 }
