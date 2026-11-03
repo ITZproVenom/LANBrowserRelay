@@ -1,44 +1,52 @@
-# LANLink for iOS
+# LANLink iOS Controller
 
-LANLink turns an iPhone on the local Wi-Fi network into the LAN agent for the LANLink MCP relay. It includes a native SwiftUI interface for bridge status, local-network scanning, command activity, and relay settings.
+The iOS app is the full remote controller for the LANLink Android agent. It does not scan the LAN itself or poll the ChatGPT relay. The Android app on the TV is the single network execution engine.
+
+## Architecture
+
+- **Android TV agent:** runs the foreground service, polls the LANLink MCP relay, discovers devices, probes services, performs constrained local HTTP requests and Wake-on-LAN.
+- **iOS controller:** connects directly to the Android TV over the same private LAN using an authenticated local HTTP API. It controls the relay, starts scans, displays devices, sends supported commands and reads activity.
+- **ChatGPT:** uses the existing LANLink MCP relay; its queued commands are executed by the Android TV agent.
 
 ## Requirements
 
 - Xcode 16 or newer
 - iOS 17 or newer
-- iPhone connected to a private Wi-Fi network
-- An enabled LANLink agent token for this iPhone
-
-## Build
-
-Open `LANLink.xcodeproj`, select the `LANLink` scheme, choose an iPhone simulator or device, and build.
-
-The GitHub Actions workflow builds the iOS target without signing and packages an unsigned device IPA for inspection or later signing. An unsigned IPA is not installable until it is signed with a valid Apple development/distribution certificate and provisioning profile.
+- Android TV running LANLink TV Agent
+- iPhone and Android TV on the same private Wi-Fi/Ethernet LAN
 
 ## Pairing
 
-1. Obtain an agent token for the iOS agent from the LANLink project owner.
-2. Install and open LANLink.
-3. In Settings, keep the default relay URL or enter your relay URL, then paste the agent token.
-4. Tap **Save settings**, return to Overview, and tap **Start bridge**.
-5. Keep LANLink open while using the ChatGPT LANLink tools.
+1. Install and open LANLink TV Agent on the Android TV.
+2. Enter the Android agent's own relay token and tap **Start Android agent** once.
+3. The TV displays its private IP address, control port (43821), and a separate controller pairing key.
+4. In the iPhone app, open **Settings** and enter those three values.
+5. Tap **Save & connect**.
 
-The token is stored in the iOS Keychain. It is never written to the repository.
+The pairing key is stored in iOS Keychain. The Android app stores its copy encrypted with Android Keystore AES-GCM.
 
-## Current capabilities
+## Controller features
 
-- Poll the existing LANLink relay using the agent heartbeat, poll, and report endpoints.
-- Handle queued discovery, common TCP port probes, constrained local HTTP requests, and Wake-on-LAN commands.
-- Discover private IPv4 hosts in a bounded scan window of 256 addresses or fewer using expanded TCP service probes and Bonjour browsing for HTTP/HTTPS, Google Cast, AirPlay, printers, SSH, SMB, HomeKit and other common LAN services.
-- Keep a local device list and command activity feed.
-- Use Keychain storage for the agent token.
-- Optional StikDebug-style background keep-alive controls: silent AVAudioEngine playback and low-accuracy Core Location updates while the bridge is active.
-- Optional LocalDevVPN URL hand-off for users who need its loopback developer tunnel.
+- Connect/disconnect from the paired Android agent.
+- Start or pause the Android agent's ChatGPT relay polling without shutting down the local control API.
+- Trigger a full Android-side LAN discovery scan.
+- Browse the Android-discovered device inventory, including IP, ARP MAC address when available, and open TCP services.
+- Probe devices, send supported local HTTP GET requests, and send Wake-on-LAN to hosts whose MAC is known.
+- View Android-side activity and relay status.
 
-## Platform limits and safety
+## Local API security
 
-- The background keep-alive is best-effort. While the bridge is active, LANLink can run a silent zero-sample AVAudioEngine playback session (`audio` background mode) and/or low-accuracy Core Location updates (`location` background mode). This follows the two controls exposed in StikDebug. iOS may still suspend or terminate the app; force-quitting stops the session. Audio/location modes increase battery use, and location permission is required for the location option.
-- LocalDevVPN is a separate loopback Network Extension used by StikDebug for on-device developer services. It is not the keep-alive mechanism and is optional for LANLink's normal local-Wi-Fi operations. The Settings button invokes LocalDevVPN's `localdevvpn://enable` hand-off when it is installed.
-- iOS does not expose ARP-table access to normal apps, so discovery reports IP addresses and responding services rather than MAC addresses. Devices that do not advertise Bonjour and block all probed TCP ports can remain undetected; the router's DHCP/client table remains the authoritative inventory.
-- Scanning and HTTP requests are limited to the current private IPv4 subnet. The app does not execute arbitrary shell commands or ADB commands.
-- The local network permission prompt is required before LAN discovery can work.
+- Android binds the controller API to TCP port 43821.
+- Every endpoint requires the high-entropy controller pairing key in an HTTP Bearer header.
+- Requests are accepted only from private IPv4 clients on the Android agent's current LAN subnet.
+- Request headers and JSON body sizes are bounded; redirects are not followed by the agent.
+- The Android agent remains the only component that executes LAN operations and communicates with the ChatGPT relay.
+
+The controller API uses HTTP on the private LAN. Use it only on a trusted network and do not forward its port to the internet.
+
+## Platform limits
+
+- The Android foreground service provides persistent agent operation subject to Android's foreground-service and battery-management policies.
+- The iOS app is a controller only; it has no GPS or silent-audio keep-alive requirement.
+- Scanning is bounded to at most 256 addresses. Devices that do not respond to probed ports and do not appear in Android's ARP cache can remain undiscovered.
+- The Android app does not execute arbitrary shell commands or bypass device pairing/passwords.
