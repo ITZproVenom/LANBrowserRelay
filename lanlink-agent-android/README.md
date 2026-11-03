@@ -23,6 +23,7 @@ The Android foreground service serves an authenticated HTTP API on TCP port 4382
 - `GET /v1/status` - agent, relay and network status
 - `GET /v1/devices` - most recent Android-side device inventory
 - `GET /v1/activity` - recent agent activity
+- `GET /v1/logs` - persistent diagnostic log ring buffer (last 500 entries)
 - `POST /v1/scan` - run Android-side LAN discovery
 - `POST /v1/relay/credential` - install a newly enrolled relay identity (controller Bearer token required)
 - `POST /v1/bridge/start` - start ChatGPT relay polling
@@ -36,7 +37,7 @@ Every route except the one-time pairing endpoint requires the controller key in 
 - Android 6.0+ (min API 23), including Android TV 9 / API 28 and ARMv7.
 - One APK supports ARMv7 and ARM64 (no native ABI-specific libraries).
 - Foreground service with ongoing notification; boot receiver restarts it after TV reboot.
-- Discovers local IPv4 hosts in a bounded scan of 256 addresses or fewer, incorporating ARP cache and common TCP service probes.
+- Discovers local IPv4 hosts using common TCP service probes and complete neighbor-table entries only. Incomplete/zero-MAC ARP records are ignored. Every scan records its subnet, probe budget, completed/timed-out hosts, TCP-confirmed count, ARP-only count, before/after ARP counts, per-host evidence and duration.
 - Displays IP, MAC address when available, hostname where available, and open services in the iPhone app.
 - Supports same-subnet probing, constrained local HTTP requests, and Wake-on-LAN.
 - Does not execute arbitrary shell commands or bypass device passwords/pairing; ADB client control is not implemented.
