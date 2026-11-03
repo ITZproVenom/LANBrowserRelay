@@ -19,6 +19,8 @@ final class SecureStore {
     private static final String PREFS = "lanlink_secure";
     private static final String VALUE = "agent_token";
     private static final String CONTROLLER_VALUE = "controller_token";
+    private static final String ADB_PRIVATE_VALUE = "adb_private_key";
+    private static final String ADB_PUBLIC_VALUE = "adb_public_key";
     private static final String ALIAS = "lanlink_agent_aes";
 
     private SecureStore() {}
@@ -41,6 +43,19 @@ final class SecureStore {
 
     static void clearControllerToken(Context context) {
         prefs(context).edit().remove(CONTROLLER_VALUE).apply();
+    }
+
+    static void writeAdbKeyPair(Context context, byte[] privateKey, byte[] publicKey) {
+        writeValue(context, ADB_PRIVATE_VALUE, Base64.encodeToString(privateKey, Base64.NO_WRAP));
+        writeValue(context, ADB_PUBLIC_VALUE, Base64.encodeToString(publicKey, Base64.NO_WRAP));
+    }
+
+    static String readAdbPrivateKey(Context context) {
+        return readValue(context, ADB_PRIVATE_VALUE);
+    }
+
+    static String readAdbPublicKey(Context context) {
+        return readValue(context, ADB_PUBLIC_VALUE);
     }
 
     private static void writeValue(Context context, String name, String token) {
