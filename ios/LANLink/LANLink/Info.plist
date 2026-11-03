@@ -25,6 +25,12 @@
     <key>NSAllowsLocalNetworking</key>
     <true/>
   </dict>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>location</string>
+  </array>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>LANLink uses real location updates during an explicitly enabled bridge session to maintain the active background location session while you use LANLink to manage your local network. Coordinates are not stored or sent to the relay.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>LANLink discovers and communicates with devices on your local network when you start a scan or enable the bridge.</string>
   <key>UIApplicationSupportsIndirectInputEvents</key>
