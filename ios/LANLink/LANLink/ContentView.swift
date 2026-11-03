@@ -384,11 +384,35 @@ private struct SettingsView: View {
                 .font(.caption.weight(.semibold))
                 .tracking(1.0)
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Background polling is best-effort", systemImage: "iphone.gen3")
-                    .font(.subheadline.weight(.semibold))
-                Text("LANLink does not intentionally stop polling when minimised. iOS may still suspend the app after a short period. Ordinary apps cannot guarantee continuous background network polling.")
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: Binding(
+                    get: { agent.backgroundLocationEnabled },
+                    set: { agent.setBackgroundLocationMode($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Location-assisted bridge")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Use real Core Location updates during an active bridge session.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.cyan)
+
+                Divider()
+
+                Text(agent.locationStatusMessage)
                     .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                if let lastUpdate = agent.lastLocationUpdate {
+                    Text("Last location update · \\(lastUpdate.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Text("When enabled, iOS may show the blue location indicator and GPS use can increase battery consumption. LANLink does not save or upload your coordinates. The session stops when you stop the bridge or force-quit the app; background execution is still subject to iOS system policy.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(16)
