@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import SwiftUI
 import Security
 
@@ -31,7 +30,6 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 
 @MainActor
 final class AgentService: ObservableObject {
-    static let serviceType = "_lanlink._tcp"
     static let defaultPort = "43821"
 
     @Published private(set) var isConnected = false
@@ -48,10 +46,7 @@ final class AgentService: ObservableObject {
     @Published var statusMessage = "Searching for LANLink on your local network…"
 
     private let session: URLSession
-    private var browser: NWBrowser?
-    private var resolveConnections: [NWConnection] = []
-    private var attemptedServices = Set<String>()
-    private var isConnecting = false
+    private var discoveryTask: Task<Void, Never>?
     private let controllerToken: String
 
     init() {
@@ -72,102 +67,131 @@ final class AgentService: ObservableObject {
     }
 
     func startDiscovery() {
-        browser?.cancel()
-        browser = nil
-        resolveConnections.forEach { $0.cancel() }
-        resolveConnections.removeAll()
-        attemptedServices.removeAll()
-        isConnecting = false
-        statusMessage = "Searching for LANLink TV Agent on this Wi-Fi…"
+        stopDiscovery()
+        isConnected = false
+        statusMessage = "Searching this Wi-Fi network for the LANLink TV agent…"
 
-        let parameters = NWParameters.tcp
-        let newBrowser = NWBrowser(
-            for: .bonjour(type: Self.serviceType, domain: nil),
-            using: parameters
-        )
-
-        newBrowser.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                guard let self else { return }
-                switch state {
-                case .ready:
-                    if !self.isConnected {
-                        self.statusMessage = "Looking for an Android LANLink agent…"
-                    }
-                case .failed(let error):
-                    self.statusMessage = "Local discovery failed: \(error.localizedDescription)"
-                    self.browser = nil
-                case .cancelled:
-                    self.browser = nil
-                default:
-                    break
-                }
-            }
+        discoveryTask = Task { [weak self] in
+            await self?.runDirectDiscovery()
         }
-
-        newBrowser.browseResultsChangedHandler = { [weak self] results, _ in
-            guard let self else { return }
-            for result in results {
-                guard case let .service(name, _, _, _) = result.endpoint else { continue }
-                let key = result.endpoint.debugDescription
-                Task { @MainActor in
-                    guard !self.isConnected,
-                          !self.isConnecting,
-                          self.attemptedServices.insert(key).inserted else { return }
-                    self.discoveredName = name
-                    self.resolveAndConnect(result.endpoint, displayName: name)
-                }
-            }
-        }
-
-        browser = newBrowser
-        newBrowser.start(queue: .global(qos: .userInitiated))
     }
 
     func stopDiscovery() {
-        browser?.cancel()
-        browser = nil
-        resolveConnections.forEach { $0.cancel() }
-        resolveConnections.removeAll()
+        discoveryTask?.cancel()
+        discoveryTask = nil
     }
 
-    private func resolveAndConnect(_ endpoint: NWEndpoint, displayName: String) {
-        guard !isConnecting else { return }
-        isConnecting = true
-        statusMessage = "Found \(displayName). Connecting…"
+    /// Bonjour is intentionally not used here. LiveContainer runs guest apps
+    /// under its own process identity, so guest NSBonjourServices declarations
+    /// are not merged into LiveContainer's allowlist. Plain TCP is supported.
+    private func runDirectDiscovery() async {
+        guard let interface = LocalNetworkAgent.interfaceInfo(),
+              let localAddress = Self.ipv4HostOrder(interface.address) else {
+            statusMessage = "Connect the iPhone to the same private Wi-Fi network as the Android TV, then search again."
+            discoveryTask = nil
+            return
+        }
 
-        let connection = NWConnection(to: endpoint, using: .tcp)
-        resolveConnections.append(connection)
-        connection.stateUpdateHandler = { [weak self] state in
-            guard case .ready = state else {
-                if case .failed = state {
-                    Task { @MainActor in self?.isConnecting = false }
+        let network = localAddress & interface.scanMask
+        let broadcast = network | ~interface.scanMask
+        guard broadcast > network + 1 else {
+            statusMessage = "The current Wi-Fi network has no scannable host addresses."
+            discoveryTask = nil
+            return
+        }
+
+        let addresses = ((network + 1)..<broadcast)
+            .filter { $0 != localAddress }
+            .map(Self.ipv4String)
+
+        let prefix = interface.scanMask.nonzeroBitCount
+        subnet = "\(interface.address)/\(prefix)"
+        statusMessage = "Checking the local subnet for the LANLink TV agent…"
+
+        for batchStart in stride(from: 0, to: addresses.count, by: 32) {
+            if Task.isCancelled { return }
+            let batch = Array(addresses[batchStart..<min(batchStart + 32, addresses.count)])
+
+            let candidate = await withTaskGroup(of: String?.self) { group in
+                for host in batch {
+                    group.addTask { [weak self] in
+                        guard let self,
+                              await self.isLANLinkAgent(at: host) else { return nil }
+                        return host
+                    }
                 }
-                return
+
+                var match: String?
+                for await result in group {
+                    if match == nil, let result {
+                        match = result
+                        group.cancelAll()
+                    }
+                }
+                return match
             }
 
-            let remote = connection.currentPath?.remoteEndpoint
-            connection.cancel()
-            guard case let .hostPort(host, port) = remote else {
-                Task { @MainActor in
-                    self?.isConnecting = false
-                    self?.statusMessage = "Found LANLink but couldn't resolve its local address."
-                }
+            if Task.isCancelled { return }
+            if let candidate {
+                discoveredName = "LANLink TV Agent"
+                discoveryTask = nil
+                await pairAndConnect(
+                    host: candidate,
+                    port: UInt16(defaultPort) ?? 43821,
+                    displayName: discoveredName
+                )
                 return
-            }
-
-            let address = String(describing: host)
-            let portNumber = port.rawValue
-            Task { @MainActor in
-                guard let self else { return }
-                await self.pairAndConnect(host: address, port: portNumber, displayName: displayName)
             }
         }
-        connection.start(queue: .global(qos: .userInitiated))
+
+        discoveryTask = nil
+        statusMessage = "No LANLink TV agent found. Make sure the TV agent is running and both devices are on the same Wi-Fi network."
+    }
+
+    /// The agent returns this exact unauthenticated response for /v1/status.
+    /// Requiring it avoids pairing with an unrelated device that happens to
+    /// have TCP port 43821 open.
+    private func isLANLinkAgent(at host: String) async -> Bool {
+        guard Self.isPrivateIPv4(host),
+              let url = URL(string: "http://\(host):\(Self.defaultPort)/v1/status") else {
+            return false
+        }
+
+        var probe = URLRequest(url: url)
+        probe.httpMethod = "GET"
+        probe.timeoutInterval = 1.2
+        probe.cachePolicy = .reloadIgnoringLocalCacheData
+        probe.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await session.data(for: probe)
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 401,
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return false
+            }
+            return payload["error"] as? String == "Invalid controller token."
+        } catch {
+            return false
+        }
+    }
+
+    private static func ipv4HostOrder(_ value: String) -> UInt32? {
+        let parts = value.split(separator: ".")
+        guard parts.count == 4 else { return nil }
+        let octets = parts.compactMap { UInt8($0) }
+        guard octets.count == 4 else { return nil }
+        return (UInt32(octets[0]) << 24)
+            | (UInt32(octets[1]) << 16)
+            | (UInt32(octets[2]) << 8)
+            | UInt32(octets[3])
+    }
+
+    private static func ipv4String(_ value: UInt32) -> String {
+        "\((value >> 24) & 0xFF).\((value >> 16) & 0xFF).\((value >> 8) & 0xFF).\(value & 0xFF)"
     }
 
     private func pairAndConnect(host: String, port: UInt16, displayName: String) async {
-        defer { isConnecting = false }
         guard Self.isPrivateIPv4(host) else {
             statusMessage = "LANLink advertised an address outside the private LAN. Ignoring it."
             return
