@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -10,8 +11,8 @@ android {
         applicationId = "com.itzprovenom.lanlinkagent"
         minSdk = 23
         targetSdk = 35
-        versionCode = 303
-        versionName = "0.3.3"
+        versionCode = 304
+        versionName = "0.3.4"
     }
 
     compileOptions {
@@ -38,4 +39,5 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("io.github.rhythmcache:adb-kt:1.0.0")
 }
