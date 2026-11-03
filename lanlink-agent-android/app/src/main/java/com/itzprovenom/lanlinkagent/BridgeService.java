@@ -10,6 +10,8 @@ import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.nsd.NsdManager;
+import android.net.nsd.NsdServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -65,6 +67,8 @@ public final class BridgeService extends Service {
     private ExecutorService worker;
     private String token = "";
     private LocalControlServer controlServer;
+    private NsdManager nsdManager;
+    private NsdManager.RegistrationListener registrationListener;
     private volatile long lastRelayContact = 0L;
     private volatile String lastRelayError = "";
     private volatile JSONObject lastDiscoveryResult = new JSONObject();
@@ -88,36 +92,97 @@ public final class BridgeService extends Service {
         }
 
         token = SecureStore.read(this);
-        if (token.isEmpty()) {
-            updateNotification("Missing relay agent token");
-            return START_NOT_STICKY;
+
+        // Migrate away from the old manually displayed TV pairing secret once.
+        // The iPhone now generates its own Keychain-backed key and enrolls over
+        // the LAN using the one-time first-controller endpoint.
+        android.content.SharedPreferences migration = getSharedPreferences("lanlink_migration", MODE_PRIVATE);
+        if (!migration.getBoolean("controller_tofu_v1", false)) {
+            SecureStore.clearControllerToken(this);
+            migration.edit().putBoolean("controller_tofu_v1", true).apply();
         }
 
-        String controllerToken = SecureStore.readControllerToken(this);
-        if (controllerToken.isEmpty()) {
-            controllerToken = createControllerToken();
-            SecureStore.writeControllerToken(this, controllerToken);
-        }
         if (controlServer == null) {
             try {
-                controlServer = new LocalControlServer(this, controllerToken);
+                controlServer = new LocalControlServer(this);
                 controlServer.start();
-                addActivity("Controller ready", "Authenticated local controller listening on port " + LocalControlServer.PORT + ".", false);
+                addActivity("Controller API ready", "Waiting for the iPhone controller on the private LAN.", false);
             } catch (Exception e) {
                 controlServer = null;
                 updateNotification("Local controller failed: " + safe(e.getMessage()));
             }
         }
+        registerBonjourService();
 
-        startRelayLoop();
+        if (!token.isEmpty()) {
+            startRelayLoop();
+        } else {
+            updateNotification("Controller ready • waiting for relay credential");
+        }
         return START_STICKY;
     }
 
-    private String createControllerToken() {
-        byte[] bytes = new byte[32];
-        new java.security.SecureRandom().nextBytes(bytes);
-        return android.util.Base64.encodeToString(bytes,
-                android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP | android.util.Base64.NO_PADDING);
+    private void registerBonjourService() {
+        if (nsdManager != null && registrationListener != null) return;
+        nsdManager = (NsdManager) getSystemService(NSD_SERVICE);
+        if (nsdManager == null) return;
+
+        NsdServiceInfo info = new NsdServiceInfo();
+        info.setServiceName("LANLink-TV");
+        info.setServiceType("_lanlink._tcp.");
+        info.setPort(LocalControlServer.PORT);
+        try {
+            info.setAttribute("v", "1");
+            info.setAttribute("role", "agent");
+        } catch (Exception ignored) {}
+
+        registrationListener = new NsdManager.RegistrationListener() {
+            @Override public void onServiceRegistered(NsdServiceInfo serviceInfo) {
+                updateNotification("LANLink ready • iPhone auto-discovery enabled");
+            }
+            @Override public void onRegistrationFailed(NsdServiceInfo serviceInfo, int errorCode) {
+                updateLocalApiStatus("Bonjour registration failed (" + errorCode + ").");
+            }
+            @Override public void onServiceUnregistered(NsdServiceInfo serviceInfo) {}
+            @Override public void onUnregistrationFailed(NsdServiceInfo serviceInfo, int errorCode) {}
+        };
+        try {
+            nsdManager.registerService(info, NsdManager.PROTOCOL_DNS_SD, registrationListener);
+        } catch (Exception error) {
+            updateLocalApiStatus("Bonjour registration failed: " + safe(error.getMessage()));
+        }
+    }
+
+    private void unregisterBonjourService() {
+        if (nsdManager != null && registrationListener != null) {
+            try { nsdManager.unregisterService(registrationListener); } catch (Exception ignored) {}
+        }
+        registrationListener = null;
+        nsdManager = null;
+    }
+
+    synchronized JSONObject pairController(String proposedToken) throws Exception {
+        if (proposedToken == null || proposedToken.length() < 40 || proposedToken.length() > 128) {
+            throw new SecurityException("Invalid controller enrollment key.");
+        }
+        String current = SecureStore.readControllerToken(this);
+        if (current.isEmpty()) {
+            SecureStore.writeControllerToken(this, proposedToken);
+            addActivity("iPhone controller enrolled", "First controller enrolled automatically on the local network.", false);
+            JSONObject result = new JSONObject();
+            result.put("paired", true);
+            result.put("first_pairing", true);
+            return result;
+        }
+        if (!java.security.MessageDigest.isEqual(
+                current.getBytes(StandardCharsets.UTF_8),
+                proposedToken.getBytes(StandardCharsets.UTF_8))) {
+            throw new SecurityException("This Android agent is already paired with another iPhone. Clear app data to reset pairing.");
+        }
+        JSONObject result = new JSONObject();
+        result.put("paired", true);
+        result.put("first_pairing", false);
+        return result;
     }
 
     private synchronized void startRelayLoop() {
@@ -149,6 +214,7 @@ public final class BridgeService extends Service {
             controlServer.stop();
             controlServer = null;
         }
+        unregisterBonjourService();
         stopForeground(true);
         super.onDestroy();
     }
