@@ -19,13 +19,19 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            buildConfigField("int", "LOCAL_CONTROL_PORT", "43822")
         }
         release {
             isMinifyEnabled = false
+            buildConfigField("int", "LOCAL_CONTROL_PORT", "43821")
         }
     }
 }
