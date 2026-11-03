@@ -380,19 +380,20 @@ private struct SettingsView: View {
 
     private var backgroundCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("BACKGROUND OPERATION")
+            Text("BACKGROUND KEEP-ALIVE")
                 .font(.caption.weight(.semibold))
                 .tracking(1.0)
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 12) {
+
+            VStack(alignment: .leading, spacing: 14) {
                 Toggle(isOn: Binding(
-                    get: { agent.backgroundLocationEnabled },
-                    set: { agent.setBackgroundLocationMode($0) }
+                    get: { agent.backgroundAudioEnabled },
+                    set: { agent.setBackgroundAudioMode($0) }
                 )) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Location-assisted bridge")
+                        Text("Silent Audio")
                             .font(.subheadline.weight(.semibold))
-                        Text("Use real Core Location updates during an active bridge session.")
+                        Text("Plays a zero-volume silent audio stream while the bridge is active.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -400,6 +401,20 @@ private struct SettingsView: View {
                 .tint(.cyan)
 
                 Divider()
+
+                Toggle(isOn: Binding(
+                    get: { agent.backgroundLocationEnabled },
+                    set: { agent.setBackgroundLocationMode($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Background Location")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Uses low-accuracy location updates while the bridge is active.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.cyan)
 
                 Text(agent.locationStatusMessage)
                     .font(.footnote)
@@ -411,7 +426,24 @@ private struct SettingsView: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                Text("When enabled, iOS may show the blue location indicator and GPS use can increase battery consumption. LANLink does not save or upload your coordinates. The session stops when you stop the bridge or force-quit the app; background execution is still subject to iOS system policy.")
+                Text("These are the same two background keep-alive techniques exposed by StikDebug. Audio is silent; location is low accuracy. Neither option stores or uploads coordinates. Both stop when you stop the bridge. iOS can still suspend or terminate the process, and these modes can increase battery use.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                Button {
+                    agent.connectLocalDevVPN()
+                } label: {
+                    Label("Connect LocalDevVPN", systemImage: "network")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.bordered)
+                .tint(.cyan)
+
+                Text("LocalDevVPN provides StikDebug's on-device loopback tunnel. It is optional for LANLink's normal Wi-Fi discovery and is not itself the background keep-alive.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
