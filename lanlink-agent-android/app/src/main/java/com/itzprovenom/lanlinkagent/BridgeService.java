@@ -29,8 +29,8 @@ import java.net.URL;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.io.BufferedReader;
+import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -318,8 +318,10 @@ public final class BridgeService extends Service {
 
     private Map<String,String> arpTable() {
         Map<String,String> result = new HashMap<>();
-        try {
-            for (String line : Files.readAllLines(Paths.get("/proc/net/arp"))) {
+        try (BufferedReader reader = new BufferedReader(new FileReader("/proc/net/arp"))) {
+            String line;
+            reader.readLine();
+            while ((line = reader.readLine()) != null) {
                 String[] parts = line.trim().split("\\s+");
                 if (parts.length >= 4 && parts[3].matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")) result.put(parts[0], parts[3].toLowerCase());
             }
@@ -336,13 +338,13 @@ public final class BridgeService extends Service {
         String scheme = p.optString("scheme", "http");
         if (!"http".equals(scheme) && !"https".equals(scheme)) throw new IllegalArgumentException("Invalid URL scheme.");
         String method = p.optString("method", "GET").toUpperCase();
-        if (!List.of("GET","HEAD","POST","PUT","PATCH","DELETE").contains(method)) throw new IllegalArgumentException("HTTP method is not allowed.");
+        if (!java.util.Arrays.asList("GET","HEAD","POST","PUT","DELETE").contains(method)) throw new IllegalArgumentException("HTTP method is not allowed.");
         String path = p.optString("path", "/");
         if (!path.startsWith("/") || path.startsWith("//") || path.contains("\\\\") || path.contains("\\r") || path.contains("\\n") || path.length() > 2048 || java.util.Arrays.asList(path.split("/")).contains("..")) throw new IllegalArgumentException("Unsafe request path.");
         String body = p.optString("body", "");
         if (body.getBytes(StandardCharsets.UTF_8).length > 16384) throw new IllegalArgumentException("Request body is too large.");
         String contentType = p.optString("content_type", "application/json");
-        if (!List.of("application/json","text/plain","application/x-www-form-urlencoded").contains(contentType)) throw new IllegalArgumentException("Content-Type not allowed.");
+        if (!java.util.Arrays.asList("application/json","text/plain","application/x-www-form-urlencoded").contains(contentType)) throw new IllegalArgumentException("Content-Type not allowed.");
         String endpoint = scheme + "://" + ip + ":" + port + path;
         HttpURLConnection c = (HttpURLConnection) new URL(endpoint).openConnection();
         c.setRequestMethod(method);
