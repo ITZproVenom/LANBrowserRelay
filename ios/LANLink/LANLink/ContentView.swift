@@ -371,7 +371,7 @@ private struct ControllerSettingsView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.cyan)
-                            .disabled(agent.isProvisioningRelay || (!agent.hasPendingRelayCredential && activationCode.count != 64))
+                            .disabled(agent.isProvisioningRelay || (!agent.hasPendingRelayCredential && activationCode.trimmingCharacters(in: .whitespacesAndNewlines).count != 64))
                             Text("Activation codes expire after a short time and can be used once. A pending activation can be safely retried from this screen.")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
