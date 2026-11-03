@@ -72,8 +72,12 @@ final class AgentService: ObservableObject {
     }
 
     func startDiscovery() {
-        guard browser == nil else { return }
+        browser?.cancel()
+        browser = nil
+        resolveConnections.forEach { $0.cancel() }
+        resolveConnections.removeAll()
         attemptedServices.removeAll()
+        isConnecting = false
         statusMessage = "Searching for LANLink TV Agent on this Wi-Fi…"
 
         let parameters = NWParameters.tcp
