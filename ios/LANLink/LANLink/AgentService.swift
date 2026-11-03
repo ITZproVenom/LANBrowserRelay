@@ -431,7 +431,7 @@ final class AgentService: ObservableObject {
             let learned = result["arp_new_count"] as? Int ?? 0
             let timedOut = result["hosts_timed_out"] as? Int ?? 0
             let duration = result["duration_ms"] as? Int ?? 0
-            scanSummary = "\(total) observed · \(tcp) TCP-confirmed · \(arp) ARP-only (\(preexisting) pre-existing, \(learned) learned) · \(timedOut) timed out · \(duration) ms"
+            scanSummary = "\(total) observed · 1 TV agent · \(tcp) TCP-confirmed · \(arp) ARP-only (\(preexisting) pre-existing, \(learned) learned) · \(timedOut) timed out · \(duration) ms"
             statusMessage = "Android observed \(total) entries on \(subnet): \(tcp) TCP-confirmed and \(arp) ARP-only."
             addLocalActivity("LAN scan complete", scanSummary, failed: false)
             await refreshPanels()
