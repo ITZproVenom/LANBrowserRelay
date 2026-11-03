@@ -20,6 +20,11 @@
   <string>1</string>
   <key>LSRequiresIPhoneOS</key>
   <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
   <key>NSLocalNetworkUsageDescription</key>
   <string>LANLink discovers and communicates with devices on your local network when you start a scan or enable the bridge.</string>
   <key>UIApplicationSupportsIndirectInputEvents</key>
