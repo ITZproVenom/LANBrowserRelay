@@ -132,8 +132,8 @@ public final class BridgeService extends Service {
         info.setServiceType("_lanlink._tcp.");
         info.setPort(LocalControlServer.PORT);
         try {
-            info.setAttribute("v", "1");
-            info.setAttribute("role", "agent");
+            info.setAttribute("v", "1".getBytes(StandardCharsets.UTF_8));
+            info.setAttribute("role", "agent".getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) {}
 
         registrationListener = new NsdManager.RegistrationListener() {
