@@ -11,6 +11,10 @@ The iOS app is the full remote controller for the LANLink Android TV agent. It d
 
 The Android service starts again after TV reboot. The iPhone reconnects automatically whenever LANLink is open and returns to the foreground.
 
+### Diagnostics and scan evidence
+
+The Activity tab shows the Android agent's persistent diagnostic log, including scan start/completion, subnet and probe budget, TCP-confirmed devices, ARP-only observations, pre-existing versus newly learned ARP entries, per-host evidence, timeouts, relay heartbeat/errors, and duration. Use Share to export the last 200 log entries for troubleshooting. Device rows distinguish TCP-confirmed hosts from ARP-only entries.
+
 ### ChatGPT relay activation
 
 Local iPhone control and the ChatGPT relay use separate credentials. A fresh TV install can pair locally without setup, but the relay needs a one-time activation code. Open **Settings → Activate ChatGPT relay**, paste the short-lived code issued for this TV, and activate once. The iPhone exchanges it for a new per-TV relay identity, sends that identity over the already-authenticated local controller connection, and the TV stores it encrypted with Android Keystore. The long-lived relay token is not stored on the iPhone or embedded in either app. After activation, the Start/Pause control works normally.
