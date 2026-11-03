@@ -15,9 +15,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.7</string>
+  <string>0.2.0</string>
   <key>CFBundleVersion</key>
-  <string>9</string>
+  <string>20</string>
   <key>LSRequiresIPhoneOS</key>
   <true/>
   <key>CFBundleURLTypes</key>
@@ -36,33 +36,8 @@
     <key>NSAllowsLocalNetworking</key>
     <true/>
   </dict>
-  <key>UIBackgroundModes</key>
-  <array>
-    <string>audio</string>
-    <string>location</string>
-  </array>
-  <key>NSLocationWhenInUseUsageDescription</key>
-  <string>LANLink uses low-accuracy location updates only while its bridge is active to support background keep-alive. Coordinates are not stored or sent to the relay.</string>
-  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-  <string>LANLink requests background location updates during an active bridge session so iOS can keep its process running while location updates are delivered. Coordinates are not stored or sent to the relay.</string>
-  <key>NSBonjourServices</key>
-  <array>
-    <string>_http._tcp</string>
-    <string>_https._tcp</string>
-    <string>_googlecast._tcp</string>
-    <string>_airplay._tcp</string>
-    <string>_raop._tcp</string>
-    <string>_ipp._tcp</string>
-    <string>_ipps._tcp</string>
-    <string>_ssh._tcp</string>
-    <string>_smb._tcp</string>
-    <string>_hap._tcp</string>
-    <string>_device-info._tcp</string>
-    <string>_workstation._tcp</string>
-    <string>_adb-tls-connect._tcp</string>
-  </array>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>LANLink discovers and communicates with devices on your local network when you start a scan or enable the bridge.</string>
+  <string>LANLink connects to your paired Android TV agent over your local Wi-Fi network to manage LAN discovery and device commands.</string>
   <key>UIApplicationSupportsIndirectInputEvents</key>
   <true/>
   <key>UISupportedInterfaceOrientations</key>
