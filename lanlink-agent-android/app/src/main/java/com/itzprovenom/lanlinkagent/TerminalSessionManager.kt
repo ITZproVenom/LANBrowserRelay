@@ -138,15 +138,17 @@ internal object TerminalSessionManager {
             if (markerIndex < 0) endCursor = session.bufferEnd
             val endIndex = (endCursor - session.bufferStart).coerceAtLeast(startIndex.toLong()).toInt().coerceAtMost(outputSnapshot.length)
             val cleaned = outputSnapshot.substring(startIndex, endIndex)
+            val truncated = cleaned.length > MAX_READ_CHARS || startCursor < session.bufferStart
+            val nextCursor = if (cleaned.length > MAX_READ_CHARS) startCursor + MAX_READ_CHARS else endCursor
             return JSONObject()
                 .put("session_id", session.id)
                 .put("output", cleaned.take(MAX_READ_CHARS))
-                .put("output_truncated", cleaned.length > MAX_READ_CHARS || startCursor < session.bufferStart)
+                .put("output_truncated", truncated)
                 .put("exit_code", exitCode ?: JSONObject.NULL)
                 .put("completed", markerIndex >= 0)
                 .put("timed_out", markerIndex < 0 && session.isAlive())
                 .put("process_running", session.isAlive())
-                .put("next_cursor", endCursor)
+                .put("next_cursor", nextCursor)
         }
     }
 
@@ -170,8 +172,8 @@ internal object TerminalSessionManager {
         val session = requireSession(payload)
         val requestedCursor = payload.optLong("cursor", 0L).coerceAtLeast(0L)
         synchronized(session.outputLock) {
-            val actualCursor = requestedCursor.coerceAtLeast(session.bufferStart)
-            val start = (actualCursor - session.bufferStart).toInt().coerceAtMost(session.buffer.length)
+            val actualCursor = requestedCursor.coerceIn(session.bufferStart, session.bufferEnd)
+            val start = (actualCursor - session.bufferStart).toInt().coerceIn(0, session.buffer.length)
             val end = (start + MAX_READ_CHARS).coerceAtMost(session.buffer.length)
             val output = session.buffer.substring(start, end)
             val nextCursor = session.bufferStart + end
@@ -233,6 +235,7 @@ internal object TerminalSessionManager {
                             synchronized(outputLock) {
                                 buffer.append(chars, 0, count)
                                 bufferEnd += count
+                                lastActivity = System.currentTimeMillis()
                                 if (buffer.length > MAX_BUFFER_CHARS) {
                                     val remove = buffer.length - MAX_BUFFER_CHARS
                                     buffer.delete(0, remove)
