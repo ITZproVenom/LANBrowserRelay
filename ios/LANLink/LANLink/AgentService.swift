@@ -35,6 +35,9 @@ final class AgentService: ObservableObject {
     @Published private(set) var isConnected = false
     @Published private(set) var isRunning = false
     @Published private(set) var isScanning = false
+    @Published private(set) var isRelayConfigured = false
+    @Published private(set) var isProvisioningRelay = false
+    @Published private(set) var hasPendingRelayCredential = false
     @Published private(set) var androidHost = ""
     @Published private(set) var portText = defaultPort
     @Published private(set) var bridgeAddress = ""
@@ -48,8 +51,10 @@ final class AgentService: ObservableObject {
     private let session: URLSession
     private var discoveryTask: Task<Void, Never>?
     private let controllerToken: String
+    private static let relayEnrollmentURL = URL(string: "https://odihwrrcgchtqohrgtdb.supabase.co/functions/v1/lanlink-mcp/agent/enroll")!
 
     init() {
+        hasPendingRelayCredential = SecureStore.read(account: "relay-agent-token-pending") != nil
         let savedToken = SecureStore.read(account: "android-controller-token-v2")
         if let savedToken, savedToken.count >= 40 {
             controllerToken = savedToken
@@ -215,14 +220,17 @@ final class AgentService: ObservableObject {
             let status = try await request("/v1/status", method: "GET")
             isConnected = true
             isRunning = status["relay_running"] as? Bool ?? false
+            isRelayConfigured = status["relay_configured"] as? Bool ?? isRunning
             bridgeAddress = status["bridge_ip"] as? String ?? host
             subnet = status["subnet"] as? String ?? ""
             let last = status["last_relay_contact"] as? Double ?? 0
             lastRelayContact = last > 0 ? Date(timeIntervalSince1970: last / 1000) : nil
 
             statusMessage = isRunning
-                ? "Connected to \(displayName). Android relay is running."
-                : "Connected to \(displayName). Android is ready; ChatGPT relay is not active."
+                ? "Connected to \(displayName). ChatGPT relay is running."
+                : (isRelayConfigured
+                    ? "Connected to \(displayName). ChatGPT relay is paused."
+                    : "Connected to \(displayName). Activate the ChatGPT relay once in Settings; local control already works.")
             stopDiscovery()
             await refreshPanels()
             addLocalActivity("Android connected", "Automatically discovered \(displayName) at \(host):\(port).", failed: false)
@@ -257,13 +265,16 @@ final class AgentService: ObservableObject {
             let status = try await request("/v1/status", method: "GET")
             isConnected = true
             isRunning = status["relay_running"] as? Bool ?? false
+            isRelayConfigured = status["relay_configured"] as? Bool ?? isRunning
             bridgeAddress = status["bridge_ip"] as? String ?? androidHost
             subnet = status["subnet"] as? String ?? subnet
             let last = status["last_relay_contact"] as? Double ?? 0
             lastRelayContact = last > 0 ? Date(timeIntervalSince1970: last / 1000) : nil
             statusMessage = isRunning
                 ? "Android agent and ChatGPT relay are running."
-                : "Android connected. ChatGPT relay is paused or not provisioned."
+                : (isRelayConfigured
+                    ? "Android connected. ChatGPT relay is paused."
+                    : "Android connected. Activate the ChatGPT relay once in Settings; local device control works.")
             await refreshPanels()
         } catch {
             isConnected = false
@@ -273,6 +284,10 @@ final class AgentService: ObservableObject {
     }
 
     func start() {
+        guard isRelayConfigured else {
+            statusMessage = "ChatGPT relay needs one-time activation. Open Settings to provision this TV."
+            return
+        }
         Task {
             do {
                 let result = try await request("/v1/bridge/start", method: "POST", body: [:])
@@ -281,14 +296,91 @@ final class AgentService: ObservableObject {
                     statusMessage = "ChatGPT relay started on Android."
                     addLocalActivity("Relay started", "Android agent is polling the LANLink relay.", failed: false)
                 } else {
-                    statusMessage = "Android is connected, but no ChatGPT relay credential is configured. Local device control still works."
-                    addLocalActivity("Relay not configured", "The Android agent needs a relay identity before ChatGPT can send queued commands.", failed: true)
+                    statusMessage = result["message"] as? String ?? "Android could not start ChatGPT relay."
+                    addLocalActivity("Relay start failed", statusMessage, failed: true)
                 }
                 await refresh()
             } catch {
                 statusMessage = "Could not start Android relay: \(error.localizedDescription)"
             }
         }
+    }
+
+    func provisionRelay(code: String) async {
+        guard isConnected else {
+            statusMessage = "Connect to the Android TV before activating the ChatGPT relay."
+            return
+        }
+        guard !isProvisioningRelay else { return }
+        isProvisioningRelay = true
+        defer { isProvisioningRelay = false }
+
+        do {
+            var relayToken = SecureStore.read(account: "relay-agent-token-pending")
+            if relayToken == nil {
+                let activationCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard activationCode.count == 64 && activationCode.allSatisfy({ $0.isHexDigit }) else {
+                    throw ControllerError.server("Enter the 64-character one-time activation code.")
+                }
+
+                var enrollment = URLRequest(url: Self.relayEnrollmentURL)
+                enrollment.httpMethod = "POST"
+                enrollment.timeoutInterval = 20
+                enrollment.setValue("application/json", forHTTPHeaderField: "Accept")
+                enrollment.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+                enrollment.httpBody = try JSONSerialization.data(withJSONObject: ["code": activationCode])
+
+                let (data, response) = try await session.data(for: enrollment)
+                guard let http = response as? HTTPURLResponse else {
+                    throw ControllerError.invalidResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    let detail = String(data: Data(data.prefix(500)), encoding: .utf8)
+                        ?? "Relay enrollment failed (HTTP \(http.statusCode))."
+                    throw ControllerError.server(detail)
+                }
+                let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                guard let issued = payload["agent_token"] as? String, issued.count >= 40 else {
+                    throw ControllerError.server("Relay enrollment returned no valid agent credential.")
+                }
+                try SecureStore.save(issued, account: "relay-agent-token-pending")
+                hasPendingRelayCredential = true
+                relayToken = issued
+            }
+
+            guard let relayToken else {
+                throw ControllerError.server("No relay activation credential is available.")
+            }
+            statusMessage = "Installing the relay identity on Android TV…"
+            let installed = try await request("/v1/relay/credential", method: "POST", body: [
+                "agent_token": relayToken
+            ])
+            isRelayConfigured = installed["relay_configured"] as? Bool ?? true
+            isRunning = installed["relay_running"] as? Bool ?? false
+            guard isRelayConfigured else {
+                throw ControllerError.server(installed["message"] as? String ?? "Android did not save the relay credential.")
+            }
+
+            SecureStore.delete(account: "relay-agent-token-pending")
+            hasPendingRelayCredential = false
+            statusMessage = isRunning
+                ? "ChatGPT relay identity installed. Waiting for its first secure heartbeat…"
+                : "Relay identity saved. Tap Start ChatGPT relay to begin polling."
+            addLocalActivity("ChatGPT relay provisioned", "The TV received a one-time enrolled relay identity.", failed: false)
+            await refresh()
+        } catch {
+            statusMessage = "Relay activation failed: \(error.localizedDescription)"
+            addLocalActivity("Relay activation failed", error.localizedDescription, failed: true)
+        }
+    }
+
+    func handleIncomingURL(_ url: URL) {
+        guard url.scheme == "lanlink", url.host == "provision",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+            return
+        }
+        Task { await provisionRelay(code: code) }
     }
 
     func stop() {
