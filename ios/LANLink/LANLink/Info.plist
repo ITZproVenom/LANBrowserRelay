@@ -15,9 +15,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.0</string>
+  <string>0.3.0</string>
   <key>CFBundleVersion</key>
-  <string>20</string>
+  <string>30</string>
   <key>LSRequiresIPhoneOS</key>
   <true/>
   <key>CFBundleURLTypes</key>
@@ -36,8 +36,12 @@
     <key>NSAllowsLocalNetworking</key>
     <true/>
   </dict>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_lanlink._tcp</string>
+  </array>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>LANLink connects to your paired Android TV agent over your local Wi-Fi network to manage LAN discovery and device commands.</string>
+  <string>LANLink automatically discovers and securely connects to the LANLink Android TV agent on your local network.</string>
   <key>UIApplicationSupportsIndirectInputEvents</key>
   <true/>
   <key>UISupportedInterfaceOrientations</key>
