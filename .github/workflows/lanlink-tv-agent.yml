@@ -1,0 +1,60 @@
+name: LANLink TV Agent CI
+
+on:
+  pull_request:
+    paths:
+      - "lanlink-agent-android/**"
+      - ".github/workflows/lanlink-tv-agent.yml"
+  push:
+    branches:
+      - "feat/lanlink-tv-android-agent"
+    paths:
+      - "lanlink-agent-android/**"
+      - ".github/workflows/lanlink-tv-agent.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(printf '%s\n' "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Assemble debug APK
+        working-directory: lanlink-agent-android
+        run: gradle --no-daemon assembleDebug testDebugUnitTest lintDebug --stacktrace
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=lanlink-agent-android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "com.itzprovenom.lanlinkagent.debug" "$RUNNER_TEMP/badging.txt"
+          echo "APK verified: $(stat -c%s "$APK") bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanlink-tv-agent-debug-apk
+          path: lanlink-agent-android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
