@@ -778,6 +778,32 @@ public final class BridgeService extends Service {
         return result;
     }
 
+    private JSONObject inspectHost(String ip, String mac) {
+        try {
+            JSONArray services = new JSONArray();
+            for (int i = 0; i < PORTS.length; i++) {
+                try (Socket socket = new Socket()) {
+                    socket.connect(new java.net.InetSocketAddress(ip, PORTS[i]), 130);
+                    JSONObject service = new JSONObject();
+                    service.put("port", PORTS[i]);
+                    service.put("service", NAMES[i]);
+                    services.put(service);
+                } catch (Exception ignored) {
+                    // Closed ports and timeouts are expected during a LAN scan.
+                }
+            }
+            if (services.length() == 0 && mac == null) return null;
+            JSONObject item = new JSONObject();
+            item.put("ip", ip);
+            item.put("mac", mac == null ? JSONObject.NULL : mac);
+            item.put("hostname", JSONObject.NULL);
+            item.put("services", services);
+            return item;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private JSONObject probe(String value) throws Exception {
         Lan lan = localLan();
         if (!privateIp(value) || !lan.contains(value)) throw new IllegalArgumentException("Target must be on the TV's local subnet.");
