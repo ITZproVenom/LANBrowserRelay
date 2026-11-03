@@ -23,24 +23,24 @@ internal object AdbDeviceController {
     private const val MAX_OUTPUT_CHARS = 12000
 
     @JvmStatic
-    fun execute(context: Context, payload: JSONObject): JSONObject =
+    fun execute(service: BridgeService, payload: JSONObject): JSONObject =
         runBlocking(Dispatchers.IO) {
-            executeSuspend(context.applicationContext, payload)
+            executeSuspend(service, payload)
         }
 
-    private suspend fun executeSuspend(context: Context, payload: JSONObject): JSONObject {
+    private suspend fun executeSuspend(service: BridgeService, payload: JSONObject): JSONObject {
         if (Build.VERSION.SDK_INT < 24) {
             throw IllegalStateException("ADB controller requires Android 7.0 (API 24) or newer on the LANLink bridge.")
         }
 
         val host = payload.optString("ip", "")
-        if (!isPrivateIpv4(host)) throw IllegalArgumentException("ADB target must be a private IPv4 address.")
+        if (!isPrivateIpv4(host) || !service.isSameLocalSubnet(host)) throw IllegalArgumentException("ADB target must be on the bridge's own private subnet.")
         val transport = payload.optString("transport", "tcp")
         if (transport != "tcp" && transport != "tls") {
             throw IllegalArgumentException("ADB transport must be tcp or tls.")
         }
 
-        val keyProvider = SecureAdbKeyProvider(context)
+        val keyProvider = SecureAdbKeyProvider(service)
 
         if (payload.optString("action", "") == "pair") {
             if (transport != "tls") throw IllegalArgumentException("Wireless ADB pairing requires TLS transport.")
