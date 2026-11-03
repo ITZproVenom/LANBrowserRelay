@@ -97,8 +97,15 @@ private struct DashboardView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
 
                     HStack(spacing: 12) {
-                        MetricCard(title: "Devices", value: "\(agent.devices.count)", icon: "network")
+                        MetricCard(title: "Observed entries", value: "\(agent.devices.count)", icon: "network")
                         MetricCard(title: "Controller", value: agent.isConnected ? "Online" : "Offline", icon: "iphone")
+                    }
+                    if !agent.scanSummary.isEmpty {
+                        Text(agent.scanSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -258,29 +265,69 @@ private struct ActivityView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if agent.activity.isEmpty {
-                    ContentUnavailableView("Nothing yet", systemImage: "waveform.path",
-                                           description: Text("Android agent events and command results appear here."))
+                if agent.activity.isEmpty && agent.logs.isEmpty {
+                    ContentUnavailableView("No diagnostic events yet", systemImage: "waveform.path",
+                                           description: Text("Scan activity, relay health and Android agent diagnostics will appear here."))
                 } else {
-                    List(agent.activity) { entry in
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: entry.failed ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                                .foregroundStyle(entry.failed ? .orange : .green)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(entry.title).font(.subheadline.weight(.semibold))
-                                Text(entry.detail).font(.caption).foregroundStyle(.secondary)
-                                Text(entry.date.formatted(date: .omitted, time: .shortened))
-                                    .font(.caption2).foregroundStyle(.tertiary)
+                    List {
+                        if !agent.logs.isEmpty {
+                            Section("Android diagnostics") {
+                                ForEach(agent.logs) { entry in
+                                    DisclosureGroup {
+                                        Text(entry.details.isEmpty ? "No additional details." : entry.details)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    } label: {
+                                        HStack(alignment: .top, spacing: 10) {
+                                            Circle()
+                                                .fill(entry.level == "ERROR" ? Color.red : entry.level == "WARN" ? Color.orange : Color.green)
+                                                .frame(width: 8, height: 8)
+                                                .padding(.top, 5)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(entry.event)
+                                                    .font(.subheadline.weight(.semibold))
+                                                Text(entry.message)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                Text("\(entry.level) · \(entry.timestamp.formatted(date: .omitted, time: .standard))")
+                                                    .font(.caption2.monospaced())
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                        .padding(.vertical, 4)
+
+                        if !agent.activity.isEmpty {
+                            Section("Activity") {
+                                ForEach(agent.activity) { entry in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: entry.failed ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                                            .foregroundStyle(entry.failed ? .orange : .green)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(entry.title).font(.subheadline.weight(.semibold))
+                                            Text(entry.detail).font(.caption).foregroundStyle(.secondary)
+                                            Text(entry.date.formatted(date: .omitted, time: .shortened))
+                                                .font(.caption2).foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
                     }
                     .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("Activity")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    ShareLink(item: agent.exportDiagnostics()) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
                     Button {
                         Task { await agent.refresh() }
                     } label: { Image(systemName: "arrow.clockwise") }
