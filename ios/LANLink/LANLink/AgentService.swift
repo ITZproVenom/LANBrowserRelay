@@ -2,6 +2,16 @@ import Foundation
 import SwiftUI
 import Darwin
 
+private final class DenyRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 struct ActivityEntry: Identifiable {
     let id = UUID()
     let title: String
@@ -201,11 +211,15 @@ final class AgentService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 8
+        request.httpShouldHandleCookies = false
         if !body.isEmpty {
             request.httpBody = Data(body.utf8)
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let redirectBlocker = DenyRedirects()
+        let session = URLSession(configuration: .ephemeral, delegate: redirectBlocker, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
         let http = response as? HTTPURLResponse
         let preview = String(data: data.prefix(24_000), encoding: .utf8) ?? "<binary response>"
         return ["status": http?.statusCode ?? 0, "body": preview, "truncated": data.count > 24_000]
