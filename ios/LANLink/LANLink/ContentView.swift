@@ -199,7 +199,7 @@ private struct DevicesView: View {
 
 private struct DeviceDetailView: View {
     @EnvironmentObject private var agent: AgentService
-    let device: LANDevice
+    let device: ControllerDevice
     @State private var portText = "80"
     @State private var path = "/"
 
