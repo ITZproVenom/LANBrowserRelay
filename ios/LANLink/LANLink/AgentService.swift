@@ -3,6 +3,7 @@ import SwiftUI
 import AVFoundation
 import CoreLocation
 import Darwin
+import UIKit
 
 /// Keeps a silent playback session active only while LANLink's bridge is running.
 /// This is an explicit, user-controllable background playback mode.
@@ -256,6 +257,39 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
             statusMessage = "Silent audio keep-alive enabled for the active bridge."
         } else {
             BackgroundAudioKeepAlive.shared.stop()
+            if enabled {
+                statusMessage = "Silent audio keep-alive is enabled for the next bridge session."
+            }
+        }
+    }
+
+    /// Open LocalDevVPN's supported hand-off URL. The VPN is a loopback tunnel
+    /// for on-device developer services; it is not the keep-alive mechanism.
+    func connectLocalDevVPN() {
+        let callbackScheme = ProcessInfo.processInfo.environment["LC_HOME_PATH"] != nil
+            ? "livecontainer"
+            : "lanlink"
+        var components = URLComponents()
+        components.scheme = "localdevvpn"
+        components.host = "enable"
+        components.queryItems = [URLQueryItem(name: "scheme", value: callbackScheme)]
+
+        guard let url = components.url else {
+            statusMessage = "Could not create the LocalDevVPN hand-off URL."
+            return
+        }
+        UIApplication.shared.open(url, options: [:]) { [weak self] opened in
+            Task { @MainActor in
+                guard let self else { return }
+                if opened {
+                    self.statusMessage = "Opening LocalDevVPN. Connect the loopback tunnel there, then return to LANLink."
+                } else if let storeURL = URL(string: "https://apps.apple.com/app/id6755608044") {
+                    self.statusMessage = "LocalDevVPN is not installed. Opening its App Store page."
+                    UIApplication.shared.open(storeURL)
+                } else {
+                    self.statusMessage = "LocalDevVPN could not be opened."
+                }
+            }
         }
     }
 
@@ -329,7 +363,7 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
             guard let self else { return }
             self.lastLocationUpdate = updateTime
             self.isReceivingBackgroundLocation = true
-            self.locationStatusMessage = "Receiving location updates. Coordinates are not stored or sent to the relay."
+            self.locationStatusMessage = "Low-accuracy location heartbeat received. Coordinates are not stored or sent to the relay."
         }
     }
 
@@ -354,7 +388,7 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
                 startLocationBackgroundSession()
             }
         case .inactive, .background:
-            if (backgroundAudioEnabled && backgroundAudioEnabled) || (backgroundLocationEnabled && isReceivingBackgroundLocation) {
+            if backgroundAudioEnabled || (backgroundLocationEnabled && isReceivingBackgroundLocation) {
                 statusMessage = "Bridge background keep-alive is enabled. iOS still controls background scheduling."
             } else {
                 statusMessage = "Bridge active. Enable Silent Audio or Background Location for best-effort background execution."
