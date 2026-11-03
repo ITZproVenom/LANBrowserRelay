@@ -57,7 +57,7 @@ private struct DashboardView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Text(agent.isRunning
-                             ? "ChatGPT can send supported LAN commands while this app stays open."
+                             ? "ChatGPT can send supported LAN commands while iOS allows background execution. For reliable access, keep LANLink in the foreground."
                              : "Start the bridge to let ChatGPT reach devices on this iPhone's local network.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -240,10 +240,19 @@ private struct SettingsView: View {
                     SecureField("iPhone agent token", text: $agent.agentToken)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    Button("Save settings") {
-                        saved = agent.saveSettings()
+                    HStack {
+                        Button("Use default") {
+                            agent.relayEndpoint = AgentService.defaultRelay
+                        }
+                        Spacer()
+                        Button("Save settings") {
+                            saved = agent.saveSettings()
+                        }
+                        .fontWeight(.semibold)
                     }
-                    .fontWeight(.semibold)
+                    Text("Accepts the function URL with a trailing slash or /mcp suffix.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Local network") {
@@ -254,9 +263,9 @@ private struct SettingsView: View {
                 }
 
                 Section("Background operation") {
-                    Label("Bridge runs while LANLink is open", systemImage: "iphone.gen3")
+                    Label("Background polling is best-effort", systemImage: "iphone.gen3")
                         .font(.subheadline.weight(.medium))
-                    Text("iOS may suspend network activity after you leave the app. Reopen LANLink and start the bridge again to resume ChatGPT access.")
+                    Text("LANLink no longer stops its polling task just because you minimise it. iOS can still suspend the app after a short period. Ordinary apps cannot guarantee continuous background network polling.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
