@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - "feat/lanlink-tv-android-agent"
+      - "feat/lanlink-controller-architecture"
     paths:
       - "lanlink-agent-android/**"
       - ".github/workflows/lanlink-tv-agent.yml"
