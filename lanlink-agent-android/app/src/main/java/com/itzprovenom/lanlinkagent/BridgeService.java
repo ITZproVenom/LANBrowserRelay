@@ -540,6 +540,8 @@ public final class BridgeService extends Service {
             result = httpRequest(payload);
         } else if ("wol".equals(kind)) {
             result = wakeOnLan(payload);
+        } else if ("adb".equals(kind)) {
+            result = AdbDeviceController.execute(this, payload);
         } else {
             throw new IllegalArgumentException("Unsupported command kind: " + kind);
         }
