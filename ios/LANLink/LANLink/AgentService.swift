@@ -270,12 +270,26 @@ final class AgentService: ObservableObject {
     }
 
     private func relayRequest(_ path: String, method: String, body: [String: Any]? = nil) async throws -> Data {
-        guard let base = URL(string: relayEndpoint),
-              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+        // These are the only internal routes the iPhone agent is allowed to call.
+        let allowedRoutes: Set<String> = ["agent/heartbeat", "agent/poll", "agent/report"]
+        let route = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard allowedRoutes.contains(route),
+              let normalized = Self.normalizedRelayEndpoint(relayEndpoint),
+              var components = URLComponents(string: normalized) else {
             throw AgentError.invalidRelay
         }
-        components.path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/" + path
-        guard let url = components.url else { throw AgentError.invalidRelay }
+
+        // URLComponents.path must remain absolute. The previous code removed the
+        // leading slash, causing URL construction to fail on some iOS URL parsers.
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = "/" + basePath + "/" + route
+
+        guard let url = components.url,
+              url.scheme?.lowercased() == "https",
+              url.host != nil,
+              url.path.hasSuffix("/" + route) else {
+            throw AgentError.invalidRelay
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
