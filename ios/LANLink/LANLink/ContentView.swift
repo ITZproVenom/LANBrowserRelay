@@ -98,12 +98,13 @@ private struct DashboardView: View {
 
                     Text("Quick actions").font(.headline)
                     HStack {
-                        NavigationLink {
-                            DevicesView()
+                        Button {
+                            Task { await agent.scanNow() }
                         } label: {
-                            QuickAction(icon: "dot.radiowaves.left.and.right", title: "Scan LAN")
+                            QuickAction(icon: "dot.radiowaves.left.and.right", title: agent.isScanning ? "Scanning…" : "Scan LAN")
                         }
-                        .simultaneousGesture(TapGesture().onEnded { })
+                        .buttonStyle(.plain)
+                        .disabled(agent.isScanning)
                         Button {
                             agent.start()
                         } label: {
@@ -240,8 +241,7 @@ private struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button("Save settings") {
-                        agent.saveSettings()
-                        saved = true
+                        saved = agent.saveSettings()
                     }
                     .fontWeight(.semibold)
                 }
