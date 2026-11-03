@@ -1,5 +1,7 @@
 import Foundation
+import Network
 import SwiftUI
+import Security
 
 struct ControllerDevice: Identifiable, Hashable {
     let ip: String
@@ -29,28 +31,38 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 
 @MainActor
 final class AgentService: ObservableObject {
+    static let serviceType = "_lanlink._tcp"
     static let defaultPort = "43821"
-
-    @Published var androidHost: String
-    @Published var portText: String
-    @Published var controllerToken: String
 
     @Published private(set) var isConnected = false
     @Published private(set) var isRunning = false
     @Published private(set) var isScanning = false
+    @Published private(set) var androidHost = ""
+    @Published private(set) var portText = defaultPort
     @Published private(set) var bridgeAddress = ""
     @Published private(set) var subnet = ""
     @Published private(set) var devices: [ControllerDevice] = []
     @Published private(set) var activity: [ActivityEntry] = []
     @Published private(set) var lastRelayContact: Date?
-    @Published var statusMessage = "Connect to your Android LANLink agent."
+    @Published private(set) var discoveredName = ""
+    @Published var statusMessage = "Searching for LANLink on your local network…"
 
     private let session: URLSession
+    private var browser: NWBrowser?
+    private var resolveConnections: [NWConnection] = []
+    private var attemptedServices = Set<String>()
+    private var isConnecting = false
+    private let controllerToken: String
 
     init() {
-        androidHost = UserDefaults.standard.string(forKey: "androidHost") ?? ""
-        portText = UserDefaults.standard.string(forKey: "androidPort") ?? Self.defaultPort
-        controllerToken = SecureStore.read(account: "android-controller-token") ?? ""
+        let savedToken = SecureStore.read(account: "android-controller-token")
+        if let savedToken, savedToken.count >= 40 {
+            controllerToken = savedToken
+        } else {
+            controllerToken = Self.makeControllerToken()
+            try? SecureStore.save(controllerToken, account: "android-controller-token")
+        }
+
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 35
@@ -59,73 +71,157 @@ final class AgentService: ObservableObject {
         session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }
 
-    @discardableResult
-    func saveSettings() -> Bool {
-        let host = androidHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        let portValue = portText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = controllerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    func startDiscovery() {
+        guard browser == nil else { return }
+        attemptedServices.removeAll()
+        statusMessage = "Searching for LANLink TV Agent on this Wi-Fi…"
 
+        let parameters = NWParameters.tcp
+        let newBrowser = NWBrowser(
+            for: .bonjour(type: Self.serviceType, domain: nil),
+            using: parameters
+        )
+
+        newBrowser.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    if !self.isConnected {
+                        self.statusMessage = "Looking for an Android LANLink agent…"
+                    }
+                case .failed(let error):
+                    self.statusMessage = "Local discovery failed: \\(error.localizedDescription)"
+                    self.browser = nil
+                case .cancelled:
+                    self.browser = nil
+                default:
+                    break
+                }
+            }
+        }
+
+        newBrowser.browseResultsChangedHandler = { [weak self] results, _ in
+            guard let self else { return }
+            for result in results {
+                guard case let .service(name, _, _, _) = result.endpoint else { continue }
+                let key = result.endpoint.debugDescription
+                Task { @MainActor in
+                    guard !self.isConnected,
+                          !self.isConnecting,
+                          self.attemptedServices.insert(key).inserted else { return }
+                    self.discoveredName = name
+                    self.resolveAndConnect(result.endpoint, displayName: name)
+                }
+            }
+        }
+
+        browser = newBrowser
+        newBrowser.start(queue: .global(qos: .userInitiated))
+    }
+
+    func stopDiscovery() {
+        browser?.cancel()
+        browser = nil
+        resolveConnections.forEach { $0.cancel() }
+        resolveConnections.removeAll()
+    }
+
+    private func resolveAndConnect(_ endpoint: NWEndpoint, displayName: String) {
+        guard !isConnecting else { return }
+        isConnecting = true
+        statusMessage = "Found \\(displayName). Connecting…"
+
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        resolveConnections.append(connection)
+        connection.stateUpdateHandler = { [weak self] state in
+            guard case .ready = state else {
+                if case .failed = state {
+                    Task { @MainActor in self?.isConnecting = false }
+                }
+                return
+            }
+
+            let remote = connection.currentPath?.remoteEndpoint
+            connection.cancel()
+            guard case let .hostPort(host, port) = remote else {
+                Task { @MainActor in
+                    self?.isConnecting = false
+                    self?.statusMessage = "Found LANLink but couldn't resolve its local address."
+                }
+                return
+            }
+
+            let address = String(describing: host)
+            let portNumber = port.rawValue
+            Task { @MainActor in
+                guard let self else { return }
+                await self.pairAndConnect(host: address, port: portNumber, displayName: displayName)
+            }
+        }
+        connection.start(queue: .global(qos: .userInitiated))
+    }
+
+    private func pairAndConnect(host: String, port: UInt16, displayName: String) async {
+        defer { isConnecting = false }
         guard Self.isPrivateIPv4(host) else {
-            statusMessage = "Enter the Android TV's private IPv4 address, such as 192.168.1.20."
-            return false
+            statusMessage = "LANLink advertised an address outside the private LAN. Ignoring it."
+            return
         }
-        guard let port = Int(portValue), (1024...65535).contains(port) else {
-            statusMessage = "Enter a valid controller port between 1024 and 65535."
-            return false
-        }
-        guard token.count >= 32 else {
-            statusMessage = "Paste the controller pairing key displayed by the Android app."
-            return false
-        }
+
+        androidHost = host
+        portText = String(port)
+        UserDefaults.standard.set(host, forKey: "androidHost")
+        UserDefaults.standard.set(portText, forKey: "androidPort")
+        statusMessage = "Securely enrolling with \\(displayName)…"
 
         do {
-            try SecureStore.save(token, account: "android-controller-token")
-            UserDefaults.standard.set(host, forKey: "androidHost")
-            UserDefaults.standard.set(String(port), forKey: "androidPort")
-            androidHost = host
-            portText = String(port)
-            controllerToken = token
-            statusMessage = "Android connection details saved securely."
-            return true
+            // First contact creates a per-install controller key in Keychain.
+            // The Android agent accepts it only while its controller slot is empty.
+            _ = try await request("/v1/pair", method: "POST", body: [
+                "controller_token": controllerToken,
+                "controller": "LANLink iOS"
+            ], authenticated: false)
+
+            let status = try await request("/v1/status", method: "GET")
+            isConnected = true
+            isRunning = status["relay_running"] as? Bool ?? false
+            bridgeAddress = status["bridge_ip"] as? String ?? host
+            subnet = status["subnet"] as? String ?? ""
+            let last = status["last_relay_contact"] as? Double ?? 0
+            lastRelayContact = last > 0 ? Date(timeIntervalSince1970: last / 1000) : nil
+
+            statusMessage = isRunning
+                ? "Connected to \\(displayName). Android relay is running."
+                : "Connected to \\(displayName). Android is ready; ChatGPT relay is not active."
+            stopDiscovery()
+            await refreshPanels()
+            addLocalActivity("Android connected", "Automatically discovered \\(displayName) at \\(host):\\(port).", failed: false)
         } catch {
-            statusMessage = error.localizedDescription
-            return false
+            isConnected = false
+            statusMessage = "Found \\(displayName), but connection failed: \\(error.localizedDescription)"
+            // Keep discovery alive so a reachable agent can be retried.
         }
     }
 
     func connect() async {
-        guard saveSettings() else { return }
-        statusMessage = "Connecting to Android LANLink…"
-        do {
-            let status = try await request("/v1/status", method: "GET")
-            isConnected = true
-            isRunning = status["relay_running"] as? Bool ?? false
-            bridgeAddress = status["bridge_ip"] as? String ?? androidHost
-            subnet = status["subnet"] as? String ?? ""
-            let last = status["last_relay_contact"] as? Double ?? 0
-            lastRelayContact = last > 0 ? Date(timeIntervalSince1970: last / 1000) : nil
-            let relayError = status["last_error"] as? String ?? ""
-            statusMessage = relayError.isEmpty
-                ? "Connected to Android LANLink at \(bridgeAddress)."
-                : "Android connected. Relay: \(relayError)"
-            await refreshPanels()
-            addLocalActivity("Android connected", "Authenticated connection to \(bridgeAddress):\(portText).", failed: false)
-        } catch {
-            isConnected = false
-            isRunning = false
-            statusMessage = "Cannot reach Android agent: \(error.localizedDescription)"
+        if isConnected {
+            await refresh()
+        } else {
+            startDiscovery()
         }
     }
 
     func disconnect() {
         isConnected = false
         isRunning = false
-        statusMessage = "Controller disconnected. Android agent keeps running."
+        statusMessage = "Controller disconnected. Searching can be started again from Overview."
+        startDiscovery()
     }
 
     func refresh() async {
         guard isConnected else {
-            await connect()
+            startDiscovery()
             return
         }
         do {
@@ -136,14 +232,14 @@ final class AgentService: ObservableObject {
             subnet = status["subnet"] as? String ?? subnet
             let last = status["last_relay_contact"] as? Double ?? 0
             lastRelayContact = last > 0 ? Date(timeIntervalSince1970: last / 1000) : nil
-            let relayError = status["last_error"] as? String ?? ""
-            statusMessage = relayError.isEmpty
-                ? (isRunning ? "Android agent and ChatGPT relay are running." : "Android connected. ChatGPT relay is paused.")
-                : "Android connected. Relay: \(relayError)"
+            statusMessage = isRunning
+                ? "Android agent and ChatGPT relay are running."
+                : "Android connected. ChatGPT relay is paused or not provisioned."
             await refreshPanels()
         } catch {
             isConnected = false
-            statusMessage = "Android connection lost: \(error.localizedDescription)"
+            statusMessage = "Android connection lost: \\(error.localizedDescription)"
+            startDiscovery()
         }
     }
 
@@ -156,7 +252,7 @@ final class AgentService: ObservableObject {
                 addLocalActivity("Relay started", "Android agent is polling the LANLink relay.", failed: false)
                 await refresh()
             } catch {
-                statusMessage = "Could not start Android relay: \(error.localizedDescription)"
+                statusMessage = "Could not start Android relay: \\(error.localizedDescription)"
             }
         }
     }
@@ -166,18 +262,19 @@ final class AgentService: ObservableObject {
             do {
                 _ = try await request("/v1/bridge/stop", method: "POST", body: [:])
                 isRunning = false
-                statusMessage = "ChatGPT relay paused. The Android controller API remains online."
+                statusMessage = "ChatGPT relay paused. Android remains available for local control."
                 addLocalActivity("Relay paused", "Android stays available for iPhone control.", failed: false)
                 await refreshPanels()
             } catch {
-                statusMessage = "Could not pause Android relay: \(error.localizedDescription)"
+                statusMessage = "Could not pause Android relay: \\(error.localizedDescription)"
             }
         }
     }
 
     func scanNow() async {
         guard isConnected else {
-            statusMessage = "Connect to Android first."
+            statusMessage = "Waiting for Android LANLink…"
+            startDiscovery()
             return
         }
         guard !isScanning else { return }
@@ -188,11 +285,11 @@ final class AgentService: ObservableObject {
             let result = try await request("/v1/scan", method: "POST", body: [:])
             devices = Self.parseDevices(result["devices"] as? [[String: Any]] ?? [])
             subnet = result["subnet"] as? String ?? subnet
-            statusMessage = "Android discovered \(devices.count) device(s) on \(subnet)."
-            addLocalActivity("LAN scan complete", "\(devices.count) devices reported by Android.", failed: false)
+            statusMessage = "Android discovered \\(devices.count) device(s) on \\(subnet)."
+            addLocalActivity("LAN scan complete", "\\(devices.count) devices reported by Android.", failed: false)
             await refreshPanels()
         } catch {
-            statusMessage = "Android scan failed: \(error.localizedDescription)"
+            statusMessage = "Android scan failed: \\(error.localizedDescription)"
             addLocalActivity("LAN scan failed", error.localizedDescription, failed: true)
         }
     }
@@ -217,7 +314,10 @@ final class AgentService: ObservableObject {
 
     func handleScenePhase(_ phase: ScenePhase) {
         guard phase == .active else { return }
-        Task { await refresh() }
+        Task {
+            if isConnected { await refresh() }
+            else { startDiscovery() }
+        }
     }
 
     private func runCommand(_ kind: String, payload: [String: Any]) {
@@ -227,12 +327,12 @@ final class AgentService: ObservableObject {
                     "kind": kind,
                     "payload": payload
                 ])
-                statusMessage = "\(kind.uppercased()) completed on Android."
-                addLocalActivity("\(kind.uppercased()) completed", resultSummary(result), failed: false)
+                statusMessage = "\\(kind.uppercased()) completed on Android."
+                addLocalActivity("\\(kind.uppercased()) completed", resultSummary(result), failed: false)
                 await refreshPanels()
             } catch {
-                statusMessage = "\(kind.uppercased()) failed: \(error.localizedDescription)"
-                addLocalActivity("\(kind.uppercased()) failed", error.localizedDescription, failed: true)
+                statusMessage = "\\(kind.uppercased()) failed: \\(error.localizedDescription)"
+                addLocalActivity("\\(kind.uppercased()) failed", error.localizedDescription, failed: true)
             }
         }
     }
@@ -256,13 +356,19 @@ final class AgentService: ObservableObject {
                 )
             }
         } catch {
-            statusMessage = "Android connected, but a dashboard panel failed: \(error.localizedDescription)"
+            statusMessage = "Android connected, but a dashboard panel failed: \\(error.localizedDescription)"
         }
     }
 
-    private func request(_ path: String, method: String, body: [String: Any]? = nil) async throws -> [String: Any] {
-        guard let port = Int(portText),
-              var components = URLComponents(string: "http://\(androidHost):\(port)"),
+    private func request(
+        _ path: String,
+        method: String,
+        body: [String: Any]? = nil,
+        authenticated: Bool = true
+    ) async throws -> [String: Any] {
+        guard !androidHost.isEmpty,
+              let port = Int(portText),
+              var components = URLComponents(string: "http://\\(androidHost):\\(port)"),
               components.scheme == "http",
               Self.isPrivateIPv4(androidHost) else {
             throw ControllerError.invalidAddress
@@ -272,7 +378,9 @@ final class AgentService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 32
-        request.setValue("Bearer \(controllerToken)", forHTTPHeaderField: "Authorization")
+        if authenticated {
+            request.setValue("Bearer \\(controllerToken)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -281,7 +389,8 @@ final class AgentService: ObservableObject {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ControllerError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
-            let detail = String(data: Data(data.prefix(700)), encoding: .utf8) ?? "Android control API returned HTTP \(http.statusCode)."
+            let detail = String(data: Data(data.prefix(700)), encoding: .utf8)
+                ?? "Android control API returned HTTP \\(http.statusCode)."
             throw ControllerError.server(detail)
         }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -293,9 +402,9 @@ final class AgentService: ObservableObject {
     }
 
     private func resultSummary(_ result: [String: Any]) -> String {
-        if let status = result["status"] { return "HTTP status \(status)" }
-        if let mac = result["mac"] as? String { return "MAC \(mac)" }
-        if let ip = result["ip"] as? String { return "Device \(ip)" }
+        if let status = result["status"] { return "HTTP status \\(status)" }
+        if let mac = result["mac"] as? String { return "MAC \\(mac)" }
+        if let ip = result["ip"] as? String { return "Device \\(ip)" }
         return "Android returned a result."
     }
 
@@ -308,7 +417,7 @@ final class AgentService: ObservableObject {
                 if let object = value as? [String: Any] {
                     let name = object["service"] as? String ?? "service"
                     let port = object["port"] as? Int
-                    return port.map { "\(name):\($0)" } ?? name
+                    return port.map { "\\(name):\\($0)" } ?? name
                 }
                 return nil
             }
@@ -321,6 +430,19 @@ final class AgentService: ObservableObject {
                 services: services
             )
         }.sorted { $0.ip.localizedStandardCompare($1.ip) == .orderedAscending }
+    }
+
+    private static func makeControllerToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else {
+            return UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        }
+        return Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     private static func isPrivateIPv4(_ value: String) -> Bool {
@@ -338,7 +460,7 @@ final class AgentService: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .invalidAddress: return "Enter a valid private Android TV IP address and port."
+            case .invalidAddress: return "No valid private Android TV address was discovered."
             case .invalidResponse: return "Android returned an invalid response."
             case .server(let detail): return detail
             }
