@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-struct LANDevice: Identifiable, Hashable {
+struct ControllerDevice: Identifiable, Hashable {
     let ip: String
     let hostname: String?
     let mac: String?
@@ -40,7 +40,7 @@ final class AgentService: ObservableObject {
     @Published private(set) var isScanning = false
     @Published private(set) var bridgeAddress = ""
     @Published private(set) var subnet = ""
-    @Published private(set) var devices: [LANDevice] = []
+    @Published private(set) var devices: [ControllerDevice] = []
     @Published private(set) var activity: [ActivityEntry] = []
     @Published private(set) var lastRelayContact: Date?
     @Published var statusMessage = "Connect to your Android LANLink agent."
@@ -281,7 +281,7 @@ final class AgentService: ObservableObject {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ControllerError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
-            let detail = String(data: data.prefix(700), encoding: .utf8) ?? "Android control API returned HTTP \(http.statusCode)."
+            let detail = String(data: Data(data.prefix(700)), encoding: .utf8) ?? "Android control API returned HTTP \(http.statusCode)."
             throw ControllerError.server(detail)
         }
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -299,7 +299,7 @@ final class AgentService: ObservableObject {
         return "Android returned a result."
     }
 
-    private static func parseDevices(_ raw: [[String: Any]]) -> [LANDevice] {
+    private static func parseDevices(_ raw: [[String: Any]]) -> [ControllerDevice] {
         raw.compactMap { item in
             guard let ip = item["ip"] as? String else { return nil }
             let rawServices = item["services"] as? [Any] ?? []
@@ -314,7 +314,7 @@ final class AgentService: ObservableObject {
             }
             let hostnameValue = item["hostname"] as? String
             let macValue = item["mac"] as? String
-            return LANDevice(
+            return ControllerDevice(
                 ip: ip,
                 hostname: hostnameValue == "null" ? nil : hostnameValue,
                 mac: macValue == "null" ? nil : macValue,
