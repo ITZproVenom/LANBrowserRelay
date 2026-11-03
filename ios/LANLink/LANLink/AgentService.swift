@@ -42,7 +42,7 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
     private let locationManager = CLLocationManager()
     private var pollTask: Task<Void, Never>?
 
-    init() {
+    override init() {
         let storedEndpoint = UserDefaults.standard.string(forKey: "relayEndpoint") ?? Self.defaultRelay
         relayEndpoint = Self.normalizedRelayEndpoint(storedEndpoint) ?? Self.defaultRelay
         agentToken = SecureStore.read(account: "agent-token") ?? ""
@@ -209,21 +209,31 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        guard backgroundLocationEnabled, isRunning else { return }
-        startLocationBackgroundSession()
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor [weak self] in
+            guard let self, self.backgroundLocationEnabled, self.isRunning else { return }
+            self.startLocationBackgroundSession()
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard !locations.isEmpty else { return }
-        lastLocationUpdate = Date()
-        isReceivingBackgroundLocation = true
-        locationStatusMessage = "Receiving location updates. Coordinates are not stored or sent to the relay."
+        let updateTime = Date()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.lastLocationUpdate = updateTime
+            self.isReceivingBackgroundLocation = true
+            self.locationStatusMessage = "Receiving location updates. Coordinates are not stored or sent to the relay."
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        isReceivingBackgroundLocation = false
-        locationStatusMessage = "Location update error: \\(error.localizedDescription)"
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let message = error.localizedDescription
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.isReceivingBackgroundLocation = false
+            self.locationStatusMessage = "Location update error: \\(message)"
+        }
     }
 
     func handleScenePhase(_ phase: ScenePhase) {
