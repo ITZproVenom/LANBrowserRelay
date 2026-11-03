@@ -20,6 +20,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    packaging {
+        resources {
+            excludes += "META-INF/versions/17/OSGI-INF/MANIFEST.MF"
+        }
+    }
+
     buildFeatures {
         buildConfig = true
     }
