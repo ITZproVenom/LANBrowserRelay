@@ -299,6 +299,7 @@ public final class BridgeService extends Service {
         result.put("app", "LANLink TV Agent");
         result.put("version", "0.3.0");
         result.put("controller_paired", !SecureStore.readControllerToken(this).isEmpty());
+        result.put("relay_configured", !SecureStore.read(this).isEmpty());
         result.put("bridge_ip", lan.ip);
         result.put("subnet", lan.subnet());
         result.put("controller_port", LocalControlServer.PORT);
@@ -336,13 +337,43 @@ public final class BridgeService extends Service {
     }
 
     JSONObject controlStartBridge() {
-        startRelayLoop();
+        if (token.isEmpty()) token = SecureStore.read(this);
         JSONObject result = new JSONObject();
         try {
-            result.put("ok", true);
+            if (token.isEmpty()) {
+                result.put("ok", false);
+                result.put("relay_configured", false);
+                result.put("relay_running", false);
+                result.put("message", "No ChatGPT relay credential is provisioned for this TV.");
+                return result;
+            }
+            startRelayLoop();
+            result.put("ok", running.get());
+            result.put("relay_configured", true);
             result.put("relay_running", running.get());
-            result.put("message", "Relay polling requested.");
+            result.put("message", running.get() ? "Relay polling started." : "Relay polling could not start.");
         } catch (Exception ignored) {}
+        return result;
+    }
+
+    synchronized JSONObject controlInstallRelayCredential(String proposedToken) throws Exception {
+        if (proposedToken == null || proposedToken.length() < 40 || proposedToken.length() > 256
+                || !proposedToken.matches("[A-Za-z0-9_-]+")) {
+            throw new SecurityException("Invalid relay enrollment credential.");
+        }
+        stopRelayLoop();
+        SecureStore.write(this, proposedToken);
+        token = proposedToken;
+        lastRelayContact = 0L;
+        lastRelayError = "";
+        addActivity("ChatGPT relay provisioned", "A one-time iPhone activation installed the relay identity.", false);
+        startRelayLoop();
+
+        JSONObject result = new JSONObject();
+        result.put("ok", running.get());
+        result.put("relay_configured", true);
+        result.put("relay_running", running.get());
+        result.put("message", running.get() ? "Relay identity installed and polling started." : "Relay identity saved, but polling did not start.");
         return result;
     }
 
