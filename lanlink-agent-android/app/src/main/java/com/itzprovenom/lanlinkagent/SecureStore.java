@@ -39,6 +39,10 @@ final class SecureStore {
         return readValue(context, CONTROLLER_VALUE);
     }
 
+    static void clearControllerToken(Context context) {
+        prefs(context).edit().remove(CONTROLLER_VALUE).apply();
+    }
+
     private static void writeValue(Context context, String name, String token) {
         try {
             SecretKey key = getKey();
