@@ -55,9 +55,6 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         locationManager.distanceFilter = kCLDistanceFilterNone
         locationManager.activityType = .other
         locationManager.pausesLocationUpdatesAutomatically = false
-        locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.showsBackgroundLocationIndicator = true
-
         if backgroundLocationEnabled {
             locationStatusMessage = "Enabled. Start the bridge to begin the location session."
         }
@@ -150,6 +147,7 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         }
         isRunning = false
         locationManager.stopUpdatingLocation()
+        locationManager.allowsBackgroundLocationUpdates = false
         isReceivingBackgroundLocation = false
         if backgroundLocationEnabled {
             locationStatusMessage = "Bridge stopped. Location updates have stopped too."
@@ -165,6 +163,7 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         guard enabled else {
             locationManager.stopUpdatingLocation()
+            locationManager.allowsBackgroundLocationUpdates = false
             isReceivingBackgroundLocation = false
             locationStatusMessage = "Location-assisted background mode is off."
             addActivity("Background location disabled", "Location updates stopped.", failed: false)
@@ -193,10 +192,12 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
             locationStatusMessage = "Allow While Using App when iOS asks for location permission."
             locationManager.requestWhenInUseAuthorization()
         case .authorizedAlways, .authorizedWhenInUse:
-            locationManager.startUpdatingLocation()
-            isReceivingBackgroundLocation = true
+            if !isReceivingBackgroundLocation {
+                locationManager.startUpdatingLocation()
+                isReceivingBackgroundLocation = true
+                addActivity("Background location session started", "Core Location updates enabled for this bridge session.", failed: false)
+            }
             locationStatusMessage = "Location updates active. The blue location indicator may appear when LANLink is in the background."
-            addActivity("Background location session started", "Core Location updates enabled for this bridge session.", failed: false)
         case .denied:
             isReceivingBackgroundLocation = false
             locationStatusMessage = "Location permission is denied. Enable it in iOS Settings to use this mode."
