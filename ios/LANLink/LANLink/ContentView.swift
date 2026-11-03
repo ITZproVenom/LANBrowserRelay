@@ -159,7 +159,7 @@ private struct DevicesView: View {
                 if agent.devices.isEmpty {
                     ContentUnavailableView("No devices yet",
                                            systemImage: "point.3.connected.trianglepath.dotted",
-                                           description: Text("Scan your current private Wi-Fi network to find devices with common open services."))
+                                           description: Text("Scan the current Wi-Fi network using Bonjour advertisements and a broader set of common TCP services. Devices that hide all services can still remain invisible."))
                 } else {
                     List(agent.devices) { device in
                         VStack(alignment: .leading, spacing: 7) {
