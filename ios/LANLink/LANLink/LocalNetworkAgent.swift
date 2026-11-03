@@ -34,10 +34,29 @@ private final class CompletionLatch: @unchecked Sendable {
 
 enum LocalNetworkAgent {
     static let ports: [(UInt16, String)] = [
-        (22, "SSH"), (23, "Telnet"), (53, "DNS"), (80, "HTTP"),
-        (443, "HTTPS"), (554, "RTSP"), (5555, "ADB"), (8008, "Cast"),
-        (8080, "HTTP-alt"), (8443, "HTTPS-alt")
+        (21, "FTP"), (22, "SSH"), (23, "Telnet"), (53, "DNS"),
+        (80, "HTTP"), (81, "HTTP-alt"), (139, "NetBIOS"), (443, "HTTPS"),
+        (445, "SMB"), (554, "RTSP"), (515, "LPD"), (631, "IPP"),
+        (1883, "MQTT"), (3389, "RDP"), (5000, "HTTP-5000"), (5001, "HTTPS-5001"),
+        (5555, "ADB"), (5900, "VNC"), (7000, "AirPlay"), (8008, "Cast"),
+        (8009, "Cast-alt"), (8080, "HTTP-8080"), (8443, "HTTPS-8443"),
+        (8888, "HTTP-8888"), (9000, "HTTP-9000"), (9090, "HTTP-9090"),
+        (9100, "Printer"), (32400, "Plex"), (62078, "Apple-device"),
+        (49152, "UPnP")
     ]
+
+    private static let bonjourTypes = [
+        "_http._tcp", "_https._tcp", "_googlecast._tcp", "_airplay._tcp",
+        "_raop._tcp", "_ipp._tcp", "_ipps._tcp", "_ssh._tcp", "_smb._tcp",
+        "_hap._tcp", "_device-info._tcp", "_workstation._tcp",
+        "_adb-tls-connect._tcp"
+    ]
+
+    private struct BonjourObservation: Sendable {
+        let ip: String
+        let name: String
+        let service: String
+    }
 
     static func isPrivateIPv4(_ value: String) -> Bool {
         let parts = value.split(separator: ".").compactMap { UInt8($0) }
@@ -95,6 +114,7 @@ enum LocalNetworkAgent {
             .filter { $0 != ipHost }
             .compactMap(ipv4String)
         var found: [LANDevice] = []
+        async let bonjourResults = discoverBonjour()
 
         for batchStart in stride(from: 0, to: addresses.count, by: 16) {
             let batch = Array(addresses[batchStart..<min(batchStart + 16, addresses.count)])
@@ -107,7 +127,30 @@ enum LocalNetworkAgent {
                 }
             }
         }
-        return found.sorted { ipSortKey($0.ip) < ipSortKey($1.ip) }
+        // Merge Bonjour advertisements with TCP responders. Bonjour can find
+        // TVs, speakers, printers and Apple devices that do not expose one of
+        // the small set of HTTP/SSH ports probed above.
+        let bonjour = await bonjourResults
+        var merged = Dictionary(uniqueKeysWithValues: found.map { ($0.ip, $0) })
+        for observation in bonjour {
+            guard isPrivateIPv4(observation.ip) else { continue }
+            if let existing = merged[observation.ip] {
+                let services = Array(Set(existing.services + [observation.service])).sorted()
+                merged[observation.ip] = LANDevice(
+                    ip: observation.ip,
+                    services: services,
+                    hostname: existing.hostname ?? observation.name
+                )
+            } else {
+                merged[observation.ip] = LANDevice(
+                    ip: observation.ip,
+                    services: [observation.service],
+                    hostname: observation.name
+                )
+            }
+        }
+
+        return merged.values.sorted { ipSortKey($0.ip) < ipSortKey($1.ip) }
     }
 
     static func probe(_ ip: String) async throws -> [String] {
@@ -156,6 +199,79 @@ enum LocalNetworkAgent {
             }
         }
         guard sent == packet.count else { throw NetworkError.socketFailure }
+    }
+
+    /// Browse common Bonjour service types on the current LAN for devices
+    /// that advertise services but do not answer the TCP port probes.
+    private static func discoverBonjour() async -> [BonjourObservation] {
+        await withTaskGroup(of: [BonjourObservation].self) { group in
+            for type in bonjourTypes {
+                group.addTask {
+                    await browseBonjourType(type)
+                }
+            }
+            var observations: [BonjourObservation] = []
+            for await result in group {
+                observations.append(contentsOf: result)
+            }
+            return observations
+        }
+    }
+
+    private static func browseBonjourType(_ type: String) async -> [BonjourObservation] {
+        await withCheckedContinuation { continuation in
+            let queue = DispatchQueue(label: "com.itzprovenom.lanlink.bonjour.\\(type)")
+            let browser = NWBrowser(for: .bonjour(type: type, domain: nil), using: .tcp)
+            var observations: [String: BonjourObservation] = [:]
+            var connections: [NWConnection] = []
+            var finished = false
+
+            let finish: () -> Void = {
+                guard !finished else { return }
+                finished = true
+                browser.cancel()
+                connections.forEach { $0.cancel() }
+                continuation.resume(returning: Array(observations.values))
+            }
+
+            browser.browseResultsChangedHandler = { results, _ in
+                guard !finished else { return }
+                for result in results {
+                    guard case let .service(name, _, _, _) = result.endpoint else { continue }
+                    let connection = NWConnection(to: result.endpoint, using: .tcp)
+                    connections.append(connection)
+
+                    connection.stateUpdateHandler = { state in
+                        guard case .ready = state else { return }
+                        if let remote = connection.currentPath?.remoteEndpoint,
+                           case let .hostPort(host, _) = remote {
+                            let ip = String(describing: host)
+                            if isPrivateIPv4(ip) {
+                                let label = type
+                                    .replacingOccurrences(of: "._tcp", with: "")
+                                    .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+                                observations[ip] = BonjourObservation(
+                                    ip: ip,
+                                    name: name,
+                                    service: label
+                                )
+                            }
+                        }
+                        connection.cancel()
+                    }
+                    connection.start(queue: queue)
+                }
+            }
+
+            browser.stateUpdateHandler = { state in
+                if case .failed = state {
+                    finish()
+                }
+            }
+
+            browser.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 2.5, execute: finish)
+        }
     }
 
     private static func probeHost(_ ip: String) async -> LANDevice? {
