@@ -215,7 +215,7 @@ internal object TerminalSessionManager {
         private val directory: File
     ) {
         val inputLock = Any()
-        val outputLock = Object()
+        val outputLock = Any()
         val writer = BufferedWriter(OutputStreamWriter(process.outputStream, StandardCharsets.UTF_8))
         val buffer = StringBuilder()
         var bufferStart = 0L
@@ -238,13 +238,11 @@ internal object TerminalSessionManager {
                                     buffer.delete(0, remove)
                                     bufferStart += remove
                                 }
-                                outputLock.notifyAll()
                             }
                         }
                     }
                 } catch (_: Exception) {
                 } finally {
-                    synchronized(outputLock) { outputLock.notifyAll() }
                 }
             }, "lanlink-terminal-output-${id.take(8)}").apply {
                 isDaemon = true
