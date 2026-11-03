@@ -250,10 +250,15 @@ final class AgentService: ObservableObject {
     func start() {
         Task {
             do {
-                _ = try await request("/v1/bridge/start", method: "POST", body: [:])
-                isRunning = true
-                statusMessage = "ChatGPT relay started on Android."
-                addLocalActivity("Relay started", "Android agent is polling the LANLink relay.", failed: false)
+                let result = try await request("/v1/bridge/start", method: "POST", body: [:])
+                isRunning = result["relay_running"] as? Bool ?? false
+                if isRunning {
+                    statusMessage = "ChatGPT relay started on Android."
+                    addLocalActivity("Relay started", "Android agent is polling the LANLink relay.", failed: false)
+                } else {
+                    statusMessage = "Android is connected, but no ChatGPT relay credential is configured. Local device control still works."
+                    addLocalActivity("Relay not configured", "The Android agent needs a relay identity before ChatGPT can send queued commands.", failed: true)
+                }
                 await refresh()
             } catch {
                 statusMessage = "Could not start Android relay: \(error.localizedDescription)"
