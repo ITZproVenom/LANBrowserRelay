@@ -1,7 +1,85 @@
 import Foundation
 import SwiftUI
+import AVFoundation
 import CoreLocation
 import Darwin
+
+/// Keeps a silent playback session active only while LANLink's bridge is running.
+/// This is an explicit, user-controllable background playback mode.
+@MainActor
+final class BackgroundAudioKeepAlive {
+    static let shared = BackgroundAudioKeepAlive()
+
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
+    private var healthTimer: Timer?
+
+    private init() {}
+
+    func start() {
+        if engine?.isRunning == true, player?.isPlaying == true { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+
+            let newEngine = AVAudioEngine()
+            let newPlayer = AVAudioPlayerNode()
+            let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+
+            newEngine.attach(newPlayer)
+            newEngine.connect(newPlayer, to: newEngine.mainMixerNode, format: format)
+
+            let frameCount = AVAudioFrameCount(format.sampleRate)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+                  let channels = buffer.floatChannelData else {
+                throw KeepAliveError.cannotCreateSilentBuffer
+            }
+            buffer.frameLength = frameCount
+            memset(channels[0], 0, Int(frameCount) * MemoryLayout<Float>.size)
+
+            newPlayer.scheduleBuffer(buffer, at: nil, options: .loops)
+            try newEngine.start()
+            newPlayer.play()
+
+            engine = newEngine
+            player = newPlayer
+            startHealthCheck()
+        } catch {
+            engine?.stop()
+            engine = nil
+            player = nil
+            healthTimer?.invalidate()
+            healthTimer = nil
+        }
+    }
+
+    func stop() {
+        healthTimer?.invalidate()
+        healthTimer = nil
+        player?.stop()
+        engine?.stop()
+        player = nil
+        engine = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func startHealthCheck() {
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.engine?.isRunning != true || self.player?.isPlaying != true {
+                    self.start()
+                }
+            }
+        }
+    }
+
+    private enum KeepAliveError: Error {
+        case cannotCreateSilentBuffer
+    }
+}
 
 private final class DenyRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession,
@@ -38,6 +116,7 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
     @Published private(set) var lastLocationUpdate: Date?
     @Published private(set) var isReceivingBackgroundLocation = false
     @Published var backgroundLocationEnabled: Bool
+    @Published var backgroundAudioEnabled: Bool
 
     private let locationManager = CLLocationManager()
     private var pollTask: Task<Void, Never>?
@@ -47,12 +126,20 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         relayEndpoint = Self.normalizedRelayEndpoint(storedEndpoint) ?? Self.defaultRelay
         agentToken = SecureStore.read(account: "agent-token") ?? ""
         localAddress = LocalNetworkAgent.interfaceInfo()?.address ?? "Not connected"
-        backgroundLocationEnabled = UserDefaults.standard.bool(forKey: "backgroundLocationEnabled")
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "backgroundAudioEnabled") == nil {
+            defaults.set(true, forKey: "backgroundAudioEnabled")
+        }
+        if defaults.object(forKey: "backgroundLocationEnabled") == nil {
+            defaults.set(true, forKey: "backgroundLocationEnabled")
+        }
+        backgroundAudioEnabled = defaults.bool(forKey: "backgroundAudioEnabled")
+        backgroundLocationEnabled = defaults.bool(forKey: "backgroundLocationEnabled")
         super.init()
 
         locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+        locationManager.distanceFilter = CLLocationDistanceMax
         locationManager.activityType = .other
         locationManager.pausesLocationUpdatesAutomatically = false
         if backgroundLocationEnabled {
@@ -117,6 +204,9 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         statusMessage = "Bridge active."
         localAddress = LocalNetworkAgent.interfaceInfo()?.address ?? "Not connected"
         addActivity("Bridge started", "This iPhone is now polling the LANLink relay.", failed: false)
+        if backgroundAudioEnabled {
+            BackgroundAudioKeepAlive.shared.start()
+        }
         if backgroundLocationEnabled {
             startLocationBackgroundSession()
         }
@@ -149,14 +239,26 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         locationManager.stopUpdatingLocation()
         locationManager.allowsBackgroundLocationUpdates = false
         isReceivingBackgroundLocation = false
+        BackgroundAudioKeepAlive.shared.stop()
         if backgroundLocationEnabled {
             locationStatusMessage = "Bridge stopped. Location updates have stopped too."
         }
         statusMessage = "Bridge stopped."
     }
 
-    /// Opt-in Core Location session. The session is only active while the LAN bridge is running.
-    /// The app does not store or upload latitude/longitude; it records update timestamps only.
+    /// Silent background playback and low-accuracy Core Location are independent,
+    /// explicit options. Both are active only for the lifetime of the bridge session.
+    func setBackgroundAudioMode(_ enabled: Bool) {
+        backgroundAudioEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "backgroundAudioEnabled")
+        if enabled && isRunning {
+            BackgroundAudioKeepAlive.shared.start()
+            statusMessage = "Silent audio keep-alive enabled for the active bridge."
+        } else {
+            BackgroundAudioKeepAlive.shared.stop()
+        }
+    }
+
     func setBackgroundLocationMode(_ enabled: Bool) {
         backgroundLocationEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "backgroundLocationEnabled")
@@ -189,15 +291,18 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
 
         switch locationManager.authorizationStatus {
         case .notDetermined:
-            locationStatusMessage = "Allow While Using App when iOS asks for location permission."
-            locationManager.requestWhenInUseAuthorization()
-        case .authorizedAlways, .authorizedWhenInUse:
+            locationStatusMessage = "Allow Always when iOS asks for location permission."
+            locationManager.requestAlwaysAuthorization()
+        case .authorizedWhenInUse:
+            locationStatusMessage = "Upgrade LANLink to Always location access to use background location."
+            locationManager.requestAlwaysAuthorization()
+        case .authorizedAlways:
             if !isReceivingBackgroundLocation {
                 locationManager.startUpdatingLocation()
                 isReceivingBackgroundLocation = true
-                addActivity("Background location session started", "Core Location updates enabled for this bridge session.", failed: false)
+                addActivity("Background location session started", "Low-accuracy Core Location updates enabled for this bridge session.", failed: false)
             }
-            locationStatusMessage = "Location updates active. The blue location indicator may appear when LANLink is in the background."
+            locationStatusMessage = "Low-accuracy location updates active. Coordinates are not stored or sent to the relay."
         case .denied:
             isReceivingBackgroundLocation = false
             locationStatusMessage = "Location permission is denied. Enable it in iOS Settings to use this mode."
@@ -242,14 +347,17 @@ final class AgentService: NSObject, ObservableObject, CLLocationManagerDelegate 
         switch phase {
         case .active:
             statusMessage = "Bridge active."
+            if backgroundAudioEnabled {
+                BackgroundAudioKeepAlive.shared.start()
+            }
             if backgroundLocationEnabled {
                 startLocationBackgroundSession()
             }
         case .inactive, .background:
-            if backgroundLocationEnabled && isReceivingBackgroundLocation {
-                statusMessage = "Bridge background session active. iOS location updates are enabled."
+            if (backgroundAudioEnabled && backgroundAudioEnabled) || (backgroundLocationEnabled && isReceivingBackgroundLocation) {
+                statusMessage = "Bridge background keep-alive is enabled. iOS still controls background scheduling."
             } else {
-                statusMessage = "Bridge active, but iOS may suspend relay polling in the background. Enable location-assisted mode for background location execution."
+                statusMessage = "Bridge active. Enable Silent Audio or Background Location for best-effort background execution."
             }
         @unknown default:
             break
