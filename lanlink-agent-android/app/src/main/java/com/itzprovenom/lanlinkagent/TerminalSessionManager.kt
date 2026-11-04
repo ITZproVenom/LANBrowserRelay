@@ -37,7 +37,7 @@ internal object TerminalSessionManager {
             "environment", "status" -> LinuxRuntimeManager.status(context)
             "bootstrap" -> LinuxRuntimeManager.bootstrap(context)
             "start" -> start(context)
-            "exec" -> exec(payload)
+            "exec" -> exec(context, payload)
             "write" -> write(payload)
             "read" -> read(payload)
             "cancel" -> cancel(payload)
@@ -99,13 +99,16 @@ internal object TerminalSessionManager {
         }
     }
 
-    private fun exec(payload: JSONObject): JSONObject {
+    private fun exec(context: Context, payload: JSONObject): JSONObject {
         val session = requireSession(payload)
         val command = payload.optString("command", "")
         if (command.isBlank() || command.length > MAX_INPUT_CHARS || command.indexOf('\u0000') >= 0) {
             throw IllegalArgumentException("Terminal command must contain 1 to 16,384 characters and no NUL bytes.")
         }
         val timeoutMs = payload.optLong("timeout_ms", 30_000L).coerceIn(500L, MAX_COMMAND_TIMEOUT_MS)
+        if (!LinuxRuntimeManager.hasStorageHeadroom(context)) {
+            throw IllegalStateException("Terminal execution paused: less than 128 MB of free app storage remains on the Android TV.")
+        }
         return synchronized(session.commandLock) {
             if (!session.isAlive()) throw IllegalStateException("Terminal session has exited. Start a new session.")
             val marker = "__LANLINK_DONE_" + UUID.randomUUID().toString().replace("-", "") + "__"
@@ -122,8 +125,17 @@ internal object TerminalSessionManager {
             val deadline = System.currentTimeMillis() + timeoutMs
             var exitCode: Int? = null
             var markerSeen = false
+            var storageLimitHit = false
+            var nextStorageCheck = System.currentTimeMillis()
             var outEnd = startOut
             while (System.currentTimeMillis() < deadline) {
+                if (System.currentTimeMillis() >= nextStorageCheck) {
+                    nextStorageCheck = System.currentTimeMillis() + 1000L
+                    if (!LinuxRuntimeManager.hasStorageHeadroom(context)) {
+                        storageLimitHit = true
+                        break
+                    }
+                }
                 val snap = session.stdout.snapshot()
                 val startIndex = (startOut - snap.start).coerceAtLeast(0L).toInt().coerceAtMost(snap.text.length)
                 val markerIndex = snap.text.indexOf(marker, startIndex)
@@ -151,14 +163,14 @@ internal object TerminalSessionManager {
                         .put("session_discarded", true)
                 }
             }
-            val timedOut = !markerSeen && session.isAlive() && System.currentTimeMillis() >= deadline
-            val processExited = !markerSeen && !session.isAlive()
-            if (timedOut || processExited) {
+            val timedOut = !markerSeen && !storageLimitHit && session.isAlive() && System.currentTimeMillis() >= deadline
+            val processExited = !markerSeen && !storageLimitHit && !session.isAlive()
+            if (timedOut || processExited || storageLimitHit) {
                 // Kill/discard the shell/PRoot process. PRoot --kill-on-exit
                 // tears down traced guest processes; do not leave a timed-out
                 // command running after the MCP call has reported completion.
                 sessions.remove(session.id, session)
-                if (timedOut) session.stop()
+                session.stop()
                 outEnd = session.stdout.cursor()
             }
             if (markerSeen) {
@@ -174,9 +186,11 @@ internal object TerminalSessionManager {
                 .put("exit_code", exitCode ?: JSONObject.NULL)
                 .put("completed", markerSeen)
                 .put("timed_out", timedOut)
+                .put("resource_limit_hit", storageLimitHit)
+                .put("error", if (storageLimitHit) "Command stopped to preserve at least 128 MB of free Android app storage." else JSONObject.NULL)
                 .put("cancelled", false)
                 .put("process_running", session.isAlive())
-                .put("session_discarded", timedOut || processExited)
+                .put("session_discarded", timedOut || processExited || storageLimitHit)
                 .put("stdout_truncated", out.truncated)
                 .put("stderr_truncated", err.truncated)
                 .put("next_cursor", out.nextCursor)
