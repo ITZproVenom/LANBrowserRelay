@@ -12,6 +12,7 @@ on:
       - "feat/lanlink-controller-architecture"
     paths:
       - "lanlink-agent-android/**"
+      - "scripts/build-proot-android.sh"
       - ".github/workflows/lanlink-tv-agent.yml"
 
 permissions:
