@@ -21,8 +21,8 @@ import java.util.concurrent.TimeUnit
  */
 internal object TerminalSessionManager {
     private const val MAX_SESSIONS = 3
-    private const val MAX_BUFFER_CHARS = 65_536
-    private const val MAX_READ_CHARS = 12_000
+    private const val MAX_BUFFER_BYTES = 65_536
+    private const val MAX_READ_BYTES = 12_000
     private const val MAX_INPUT_CHARS = 16_384
     private const val MAX_COMMAND_TIMEOUT_MS = 10 * 60 * 1000L
     private const val IDLE_TIMEOUT_MS = 10 * 60 * 1000L
@@ -176,8 +176,8 @@ internal object TerminalSessionManager {
             if (markerSeen) {
                 try { Thread.sleep(75L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
             }
-            val out = session.stdout.read(startOut, MAX_READ_CHARS, outEnd)
-            val err = session.stderr.read(startErr, MAX_READ_CHARS)
+            val out = session.stdout.read(startOut, MAX_READ_BYTES, outEnd)
+            val err = session.stderr.read(startErr, MAX_READ_BYTES)
             JSONObject()
                 .put("session_id", session.id)
                 .put("stdout", out.text)
@@ -219,8 +219,8 @@ internal object TerminalSessionManager {
 
     private fun read(payload: JSONObject): JSONObject {
         val session = requireSession(payload)
-        val out = session.stdout.read(payload.optLong("cursor", 0L).coerceAtLeast(0L), MAX_READ_CHARS)
-        val err = session.stderr.read(payload.optLong("stderr_cursor", 0L).coerceAtLeast(0L), MAX_READ_CHARS)
+        val out = session.stdout.read(payload.optLong("cursor", 0L).coerceAtLeast(0L), MAX_READ_BYTES)
+        val err = session.stderr.read(payload.optLong("stderr_cursor", 0L).coerceAtLeast(0L), MAX_READ_BYTES)
         session.lastActivity = System.currentTimeMillis()
         return JSONObject()
             .put("session_id", session.id)
@@ -282,13 +282,16 @@ internal object TerminalSessionManager {
         @Volatile var lastActivity: Long = System.currentTimeMillis()
         @Volatile private var stopped = false
 
+        @Volatile private var stdoutReader: Thread? = null
+        @Volatile private var stderrReader: Thread? = null
+
         fun startOutputReaders() {
-            startReader(process.inputStream, stdout, "stdout")
-            startReader(process.errorStream, stderr, "stderr")
+            stdoutReader = startReader(process.inputStream, stdout, "stdout")
+            stderrReader = startReader(process.errorStream, stderr, "stderr")
         }
 
-        private fun startReader(input: java.io.InputStream, output: OutputBuffer, label: String) {
-            Thread({
+        private fun startReader(input: java.io.InputStream, output: OutputBuffer, label: String): Thread {
+            return Thread({
                 try {
                     InputStreamReader(input, StandardCharsets.UTF_8).use { reader ->
                         val chars = CharArray(4096)
@@ -322,6 +325,8 @@ internal object TerminalSessionManager {
             } catch (_: Exception) {
                 try { process.destroyForcibly() } catch (_: Exception) {}
             }
+            try { stdoutReader?.join(500L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+            try { stderrReader?.join(500L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
             // Never delete the Alpine rootfs or persistent /workspace here.
             deleteRecursively(directory)
         }
@@ -335,6 +340,7 @@ internal object TerminalSessionManager {
         private val buffer = StringBuilder()
         private var absoluteStart = 0L
         private var absoluteEnd = 0L
+        private var bufferBytes = 0
 
         fun cursor(): Long = synchronized(lock) { absoluteEnd }
 
@@ -342,10 +348,19 @@ internal object TerminalSessionManager {
             synchronized(lock) {
                 buffer.append(value)
                 absoluteEnd += value.length
-                if (buffer.length > MAX_BUFFER_CHARS) {
-                    val remove = buffer.length - MAX_BUFFER_CHARS
-                    buffer.delete(0, remove)
-                    absoluteStart += remove
+                bufferBytes += value.toByteArray(StandardCharsets.UTF_8).size
+                var removeChars = 0
+                var removedBytes = 0
+                while (removeChars < buffer.length && bufferBytes - removedBytes > MAX_BUFFER_BYTES) {
+                    val codePoint = Character.codePointAt(buffer, removeChars)
+                    val charCount = Character.charCount(codePoint)
+                    removedBytes += String(Character.toChars(codePoint)).toByteArray(StandardCharsets.UTF_8).size
+                    removeChars += charCount
+                }
+                if (removeChars > 0) {
+                    buffer.delete(0, removeChars)
+                    absoluteStart += removeChars
+                    bufferBytes -= removedBytes
                 }
             }
         }
@@ -361,7 +376,16 @@ internal object TerminalSessionManager {
                 val startIndex = (actual - absoluteStart).toInt().coerceIn(0, buffer.length)
                 val boundedEnd = endLimit.coerceAtMost(absoluteEnd)
                 val endIndex = (boundedEnd - absoluteStart).toInt().coerceIn(startIndex, buffer.length)
-                val readEnd = minOf(endIndex, startIndex + maximum)
+                var readEnd = startIndex
+                var readBytes = 0
+                while (readEnd < endIndex) {
+                    val codePoint = Character.codePointAt(buffer, readEnd)
+                    val charCount = Character.charCount(codePoint)
+                    val codePointBytes = String(Character.toChars(codePoint)).toByteArray(StandardCharsets.UTF_8).size
+                    if (readBytes + codePointBytes > maximum) break
+                    readBytes += codePointBytes
+                    readEnd += charCount
+                }
                 BufferRead(
                     text = buffer.substring(startIndex, readEnd),
                     nextCursor = absoluteStart + readEnd,
