@@ -129,6 +129,7 @@ internal object TerminalSessionManager {
             var nextStorageCheck = System.currentTimeMillis()
             var outEnd = startOut
             while (System.currentTimeMillis() < deadline) {
+                session.lastActivity = System.currentTimeMillis()
                 if (System.currentTimeMillis() >= nextStorageCheck) {
                     nextStorageCheck = System.currentTimeMillis() + 1000L
                     if (!LinuxRuntimeManager.hasStorageHeadroom(context)) {
