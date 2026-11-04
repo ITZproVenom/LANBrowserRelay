@@ -32,7 +32,7 @@ The TV agent hosts a persistent Alpine Linux userspace in its private applicatio
 
 ### Runtime
 
-- The agent bundles an Android-native PRoot executable for `armeabi-v7a` and `arm64-v8a`. It is built from a pinned Android-aware PRoot source revision using the Android NDK.
+- The agent bundles an Android-native PRoot executable for `armeabi-v7a` and `arm64-v8a`. It is built from a pinned Android-aware PRoot source revision using the Android NDK, with the Android shared-memory compatibility library used by the Termux PRoot build.
 - The first `lan_terminal` call should use `operation=environment` to inspect the actual Android release, API level, supported ABIs, PRoot presence, Alpine state and storage.
 - Use `operation=bootstrap` to download the pinned Alpine 3.24.3 minirootfs for the detected architecture, verify its SHA-256 sidecar, safely extract it into a staging directory, run a PRoot/APK smoke test, and only then activate it.
 - Rootfs location: `files/lanlink-linux/rootfs` under the Android app's private files directory.
@@ -41,6 +41,7 @@ The TV agent hosts a persistent Alpine Linux userspace in its private applicatio
 - PRoot's `-0` simulates UID 0 only inside Alpine. The Android process continues to run as the LANLink application UID. This is not Android root and PRoot is not a kernel security boundary.
 - The bootstrap capability is reported separately from execution. `terminal-exec` and `linux-package-management` are advertised only after a rootfs has been initialized and verified.
 - The initial native build covers ARMv7 and ARM64. Legacy `armeabi` is not assumed to be ARMv7; if the TV reports only legacy `armeabi`, bootstrap returns an explicit unsupported-ABI error rather than installing a mismatched executable.
+- The runtime requires Android API 28 or newer. It protects a 128 MB free-storage reserve and stops a running terminal command if that reserve is reached. This is a safety guard, not a kernel-enforced disk quota.
 - Actual execution on a particular TV must still be verified on that hardware. A green cross-build does not prove that the TV kernel permits PRoot tracing.
 
 ### Package installation
