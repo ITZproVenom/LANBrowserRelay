@@ -26,18 +26,61 @@ The ChatGPT relay exposes `lan_adb_command` for Android devices that have ADB en
 
 The bridge can only control devices whose ADB service is enabled and authorized. It does not silently enable debugging or bypass the target's authorization prompt.
 
-## ChatGPT terminal and arbitrary ADB shell
+## ChatGPT-operated Alpine Linux terminal
 
-The Android agent now exposes `lan_terminal` through the Supabase MCP relay:
+The TV agent hosts a persistent Alpine Linux userspace in its private application storage. ChatGPT operates it through the authenticated Supabase MCP relay; the human does not need to open or type into a terminal.
 
-- `operation=start` creates a persistent `/system/bin/sh -i` session on the Android TV.
-- `operation=exec` runs a command in that session and returns bounded output, exit status, completion/timeout state and a cursor.
-- `operation=write` sends interactive stdin; `operation=read` retrieves later output by cursor; `operation=close` destroys the session.
-- The agent permits at most three concurrent sessions, retains at most 64 KiB of output per session, limits one input/command to 16 KiB, caps a command wait at 60 seconds, and expires idle sessions after ten minutes.
-- Commands execute as the LANLink Android app UID, not root. The working directory is a private per-session app directory. Available commands are the Android TV's existing system utilities; this is not an Alpine Linux container and does not bundle Python, Node.js, apt or a general Linux package manager.
-- Use `lan_command_status` with the returned command ID to retrieve the result of each queued terminal operation. Sessions are held in agent memory and end when the service process restarts.
+### Runtime
 
-`lan_adb_command` also accepts `action=shell` and a `command` string up to 16 KiB. This runs an arbitrary command through the target device's authorized ADB shell, with a 60-second execution deadline and bounded stdout/stderr. It does not bypass Android's ADB authorization or target permissions. Shell commands can alter the target device, so use explicit target IPs and inspect the command before sending it.
+- The agent bundles an Android-native PRoot executable for `armeabi-v7a` and `arm64-v8a`. It is built from a pinned Android-aware PRoot source revision using the Android NDK.
+- The first `lan_terminal` call should use `operation=environment` to inspect the actual Android release, API level, supported ABIs, PRoot presence, Alpine state and storage.
+- Use `operation=bootstrap` to download the pinned Alpine 3.24.3 minirootfs for the detected architecture, verify its SHA-256 sidecar, safely extract it into a staging directory, run a PRoot/APK smoke test, and only then activate it.
+- Rootfs location: `files/lanlink-linux/rootfs` under the Android app's private files directory.
+- Persistent workspace: `files/lanlink-linux/workspaces/default`, exposed inside Alpine as `/workspace`.
+- The rootfs and workspace survive terminal sessions, service restarts and normal APK upgrades. Closing a terminal session does not delete installed packages or workspace files.
+- PRoot's `-0` simulates UID 0 only inside Alpine. The Android process continues to run as the LANLink application UID. This is not Android root and PRoot is not a kernel security boundary.
+- The bootstrap capability is reported separately from execution. `terminal-exec` and `linux-package-management` are advertised only after a rootfs has been initialized and verified.
+- The initial native build covers ARMv7 and ARM64. Legacy `armeabi` is not assumed to be ARMv7; if the TV reports only legacy `armeabi`, bootstrap returns an explicit unsupported-ABI error rather than installing a mismatched executable.
+- Actual execution on a particular TV must still be verified on that hardware. A green cross-build does not prove that the TV kernel permits PRoot tracing.
+
+### Package installation
+
+The shell is a real Alpine `/bin/sh` with Alpine's `apk` package manager. ChatGPT can install utilities as needed, for example:
+
+~~~sh
+apk update
+apk add python3 py3-pip
+apk add nodejs npm
+apk add go
+apk add rust cargo
+apk add ffmpeg
+apk add git curl wget jq
+~~~
+
+Packages are installed into the persistent rootfs. They are not bundled into the APK and are not preinstalled unless the bootstrap image contains them. Package availability depends on Alpine repositories and the selected architecture. Rust, Go and FFmpeg can require substantial storage and installation time.
+
+### MCP operations
+
+`lan_terminal` supports:
+
+- `environment` / `status`: report Android ABI, PRoot presence, Alpine version/readiness and storage.
+- `bootstrap`: install and verify the persistent Alpine rootfs.
+- `start`: create a new persistent interactive shell session.
+- `exec`: run a shell command or script and return bounded stdout, stderr, exit code, timeout and cursor information.
+- `write`: send interactive stdin.
+- `read`: retrieve stdout and stderr independently using their cursors.
+- `cancel`: terminate and discard the session.
+- `close`: close a session normally.
+
+Terminal commands are queued asynchronously so a long bootstrap or package installation does not block agent polling and heartbeats. Use `lan_command_status` with the returned command ID to retrieve the result. Bootstrap jobs have a longer queue expiry; command execution is capped at ten minutes. The agent supports at most three sessions, 16 KiB inputs, 64 KiB retained output per stream, 12 KiB per read, and ten minutes idle lifetime.
+
+The current terminal transport is interactive stdin/stdout/stderr pipes, not a pseudo-terminal. Shell commands and package installations work through this interface, but programs which require a controlling TTY, terminal ioctls or full job-control semantics are not yet guaranteed to work.
+
+Terminal sessions live in agent memory and end when the app process/service shuts down; the Alpine rootfs and workspace persist. Commands execute as the Android application UID, with fake-root only inside the Linux guest.
+
+### ADB
+
+`lan_adb_command` retains authorized ADB TCP and Wireless Debugging TLS pairing/connection. Its `action=shell` operation runs arbitrary commands through the target device's authorized ADB shell. ADB target authorization and Android permission boundaries are still enforced; LANLink does not bypass them.
 
 ## iPhone controller API
 
@@ -59,7 +102,7 @@ Every route except the one-time pairing endpoint requires the controller key in 
 ## Requirements and capabilities
 
 - Android 6.0+ (min API 23), including Android TV 9 / API 28 and ARMv7.
-- One APK supports ARMv7 and ARM64 (no native ABI-specific libraries).
+- The TV-agent APK packages Android-native PRoot executables for ARMv7 and ARM64. Legacy `armeabi` is not yet supported and must be reported explicitly.
 - Foreground service with ongoing notification; boot receiver restarts it after TV reboot.
 - Discovers local IPv4 hosts using common TCP service probes and complete neighbor-table entries only. Incomplete/zero-MAC ARP records are ignored. Every scan records its subnet, probe budget, completed/timed-out hosts, TCP-confirmed count, ARP-only count, before/after ARP counts, per-host evidence and duration.
 - Displays IP, MAC address when available, hostname where available, and open services in the iPhone app.
