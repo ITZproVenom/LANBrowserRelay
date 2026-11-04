@@ -46,6 +46,12 @@ internal object TerminalSessionManager {
         }
     }
 
+    fun shutdown() {
+        val active = sessions.values.toList()
+        sessions.clear()
+        active.forEach { it.stop() }
+    }
+
     private fun start(context: Context): JSONObject {
         if (!LinuxRuntimeManager.isReady(context)) {
             throw IllegalStateException("Alpine is not initialized. Call lan_terminal operation=bootstrap first.")
