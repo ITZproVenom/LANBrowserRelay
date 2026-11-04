@@ -31,6 +31,8 @@ internal object LinuxRuntimeManager {
     private const val MAX_ARCHIVE_BYTES = 64L * 1024L * 1024L
     private const val MAX_EXPANDED_BYTES = 512L * 1024L * 1024L
     private const val MAX_ENTRIES = 30_000
+    private const val MIN_FREE_BYTES = 128L * 1024L * 1024L
+    private const val BOOTSTRAP_FREE_BYTES = 192L * 1024L * 1024L
     private const val PROOT_NAME = "libproot.so"
     private const val STATE_FILE = "runtime.json"
     private val bootstrapLock = Any()
@@ -62,7 +64,9 @@ internal object LinuxRuntimeManager {
         if (!marker.isFile || !release.isFile) return false
         return try {
             JSONObject(marker.readText()).optString("alpine_version") == ALPINE_VERSION &&
-                release.readText().trim() == ALPINE_VERSION
+                release.readText().trim() == ALPINE_VERSION &&
+                File(root, "bin/sh").canExecute() &&
+                File(root, "sbin/apk").canExecute()
         } catch (_: Exception) {
             false
         }
@@ -95,6 +99,8 @@ internal object LinuxRuntimeManager {
             .put("rootfs_path", root.absolutePath)
             .put("workspace_path", workspaceDirectory(context).absolutePath)
             .put("free_bytes", context.filesDir.usableSpace)
+            .put("minimum_free_bytes", MIN_FREE_BYTES)
+            .put("bootstrap_minimum_free_bytes", BOOTSTRAP_FREE_BYTES)
             .put("rootfs_bytes", directorySize(root))
             .put("package_manager", if (ready && File(root, "sbin/apk").isFile) "apk" else "unavailable")
             .put("privilege", "Android app UID; PRoot fake-root only inside Alpine")
@@ -104,8 +110,8 @@ internal object LinuxRuntimeManager {
         if (isReady(context)) return@synchronized status(context)
         val target = detectTarget()
             ?: throw IOException("Unsupported Android ABI. Alpine runtime currently supports armeabi-v7a and arm64-v8a; legacy armeabi is not assumed compatible.")
-        if (context.filesDir.usableSpace < 100L * 1024L * 1024L) {
-            throw IOException("At least 100 MB of free app storage is required to bootstrap Alpine safely.")
+        if (context.filesDir.usableSpace < BOOTSTRAP_FREE_BYTES) {
+            throw IOException("At least 192 MB of free app storage is required to bootstrap Alpine safely.")
         }
         val proot = prootExecutable(context)
         if (!proot.isFile || !proot.canExecute()) {
@@ -171,6 +177,9 @@ internal object LinuxRuntimeManager {
         }
         status(context)
     }
+
+    fun hasStorageHeadroom(context: Context): Boolean =
+        context.filesDir.usableSpace >= MIN_FREE_BYTES
 
     fun shellCommand(context: Context): List<String> {
         if (!isReady(context)) throw IOException("Alpine is not ready. Call lan_terminal operation=bootstrap first.")
