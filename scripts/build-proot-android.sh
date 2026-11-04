@@ -40,12 +40,12 @@ import sys
 
 path = Path(sys.argv[1])
 source = path.read_text()
-needle = "#include <stdlib.h>\\n"
+needle = "#include <stdlib.h>" + chr(10)
 if source.count(needle) != 1:
     raise SystemExit("Pinned PRoot ashmem source changed; refusing an unverified header patch.")
 if "#include <string.h>" in source:
     raise SystemExit("Pinned PRoot ashmem source already includes string.h; review this patch.")
-path.write_text(source.replace(needle, needle + "#include <string.h>\\n", 1))
+path.write_text(source.replace(needle, needle + "#include <string.h>" + chr(10), 1))
 PY
 
 ANSWERS="$WORK/cross-answers.txt"
