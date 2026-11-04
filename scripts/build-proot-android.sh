@@ -126,7 +126,7 @@ build_one() {
       OBJDUMP="$TOOLCHAIN/bin/llvm-objdump" \
       CPPFLAGS="$common_cpp" \
       CFLAGS="$common_c" \
-      LDFLAGS="$common_ld" \\
+      LDFLAGS="$common_ld" \
       PROOT_WITH_LIBANDROID_SHMEM=true
 
     test -s src/proot
