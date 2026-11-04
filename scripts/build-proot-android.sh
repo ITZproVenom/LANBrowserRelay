@@ -82,7 +82,12 @@ build_one() {
     make -j2
     find bin/default -maxdepth 1 -type f -name 'talloc*.o' -print0 \
       | xargs -0 "$TOOLCHAIN/bin/llvm-ar" rcs "$prefix/lib/libtalloc.a"
-    install -m 0644 include/talloc.h "$prefix/include/talloc.h"
+    TALLOC_HEADER="$(find . -type f -name talloc.h -print -quit)"
+    if [[ -z "$TALLOC_HEADER" ]]; then
+      echo "talloc.h was not generated or included in the pinned talloc source." >&2
+      exit 1
+    fi
+    install -m 0644 "$TALLOC_HEADER" "$prefix/include/talloc.h"
   )
 
   cp -a "$WORK/proot" "$proot"
