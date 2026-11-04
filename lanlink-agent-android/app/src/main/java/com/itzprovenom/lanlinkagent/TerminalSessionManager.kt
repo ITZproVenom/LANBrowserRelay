@@ -152,11 +152,14 @@ internal object TerminalSessionManager {
                 }
             }
             val timedOut = !markerSeen && session.isAlive() && System.currentTimeMillis() >= deadline
-            if (timedOut) {
-                // Kill the shell/PRoot process. PRoot --kill-on-exit tears down
-                // traced guest processes; merely stopping the wait is unsafe.
+            val processExited = !markerSeen && !session.isAlive()
+            if (timedOut || processExited) {
+                // Kill/discard the shell/PRoot process. PRoot --kill-on-exit
+                // tears down traced guest processes; do not leave a timed-out
+                // command running after the MCP call has reported completion.
                 sessions.remove(session.id, session)
-                session.stop()
+                if (timedOut) session.stop()
+                outEnd = session.stdout.cursor()
             }
             if (markerSeen) {
                 try { Thread.sleep(75L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
@@ -173,7 +176,7 @@ internal object TerminalSessionManager {
                 .put("timed_out", timedOut)
                 .put("cancelled", false)
                 .put("process_running", session.isAlive())
-                .put("session_discarded", timedOut)
+                .put("session_discarded", timedOut || processExited)
                 .put("stdout_truncated", out.truncated)
                 .put("stderr_truncated", err.truncated)
                 .put("next_cursor", out.nextCursor)
