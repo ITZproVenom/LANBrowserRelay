@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "lanlink-agent-android/**"
+      - "scripts/build-proot-android.sh"
       - ".github/workflows/lanlink-tv-agent.yml"
   push:
     branches:
@@ -38,7 +39,9 @@ jobs:
           fi
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - name: Build Android PRoot executables
+        run: bash scripts/build-proot-android.sh "$ANDROID_HOME/ndk/27.2.12479018"
       - name: Assemble debug APK
         working-directory: lanlink-agent-android
         run: gradle --no-daemon assembleDebug testDebugUnitTest lintDebug --stacktrace
@@ -52,7 +55,9 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
           grep -q "com.itzprovenom.lanlinkagent.debug" "$RUNNER_TEMP/badging.txt"
-          echo "APK verified: $(stat -c%s "$APK") bytes"
+          unzip -l "$APK" | grep -q "lib/armeabi-v7a/libproot.so"
+          unzip -l "$APK" | grep -q "lib/arm64-v8a/libproot.so"
+          echo "APK verified with ARMv7 and ARM64 PRoot: $(stat -c%s "$APK") bytes"
       - uses: actions/upload-artifact@v4
         with:
           name: lanlink-tv-agent-debug-apk
