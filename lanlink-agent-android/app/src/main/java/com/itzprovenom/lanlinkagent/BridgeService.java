@@ -79,6 +79,7 @@ public final class BridgeService extends Service {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService worker;
+    private final ExecutorService terminalExecutor = Executors.newFixedThreadPool(3);
     private String token = "";
     private LocalControlServer controlServer;
     private NsdManager nsdManager;
@@ -246,6 +247,8 @@ public final class BridgeService extends Service {
             controlServer = null;
         }
         unregisterBonjourService();
+        terminalExecutor.shutdownNow();
+        TerminalSessionManager.shutdown();
         stopForeground(true);
         super.onDestroy();
     }
@@ -257,7 +260,7 @@ public final class BridgeService extends Service {
             android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
             if (info.versionName != null && !info.versionName.trim().isEmpty()) return info.versionName;
         } catch (Exception ignored) {}
-        return "0.3.3";
+        return "0.5.0";
     }
 
     private void publishAgentCapabilities(long now) throws Exception {
@@ -270,7 +273,13 @@ public final class BridgeService extends Service {
         capabilities.put("http");
         capabilities.put("wake-on-lan");
         capabilities.put("adb-control");
-        capabilities.put("terminal-exec");
+        if (LinuxRuntimeManager.canBootstrap(this)) {
+            capabilities.put("terminal-bootstrap");
+            if (LinuxRuntimeManager.isReady(this)) {
+                capabilities.put("terminal-exec");
+                capabilities.put("linux-package-management");
+            }
+        }
         heartbeat.put("capabilities", capabilities);
         request("/agent/heartbeat", "POST", heartbeat);
         lastAgentMetadataHeartbeat = now;
@@ -320,6 +329,15 @@ public final class BridgeService extends Service {
         String kind = command.optString("kind", "");
         JSONObject payload = command.optJSONObject("payload");
         if (payload == null) payload = new JSONObject();
+        if ("terminal".equals(kind)) {
+            try {
+                final JSONObject terminalPayload = new JSONObject(payload.toString());
+                terminalExecutor.execute(() -> executeTerminalCommand(id, terminalPayload));
+            } catch (Exception rejected) {
+                reportTerminalFailure(id, rejected);
+            }
+            return;
+        }
         try {
             JSONObject result;
             JSONObject report = new JSONObject();
@@ -335,8 +353,6 @@ public final class BridgeService extends Service {
                 result = wakeOnLan(payload);
             } else if ("adb".equals(kind)) {
                 result = AdbDeviceController.execute(this, payload);
-            } else if ("terminal".equals(kind)) {
-                result = TerminalSessionManager.execute(this, payload);
             } else {
                 throw new IllegalArgumentException("Unsupported command kind: " + kind);
             }
@@ -353,6 +369,30 @@ public final class BridgeService extends Service {
             } catch (Exception ignored) {}
             updateNotification("Task failed: " + safe(e.getMessage()));
         }
+    }
+
+
+    private void executeTerminalCommand(String id, JSONObject payload) {
+        try {
+            JSONObject result = TerminalSessionManager.execute(this, payload);
+            JSONObject report = new JSONObject();
+            report.put("command_id", id);
+            report.put("result", result);
+            request("/agent/report", "POST", report);
+            updateNotification("Connected • last task: terminal");
+        } catch (Exception error) {
+            reportTerminalFailure(id, error);
+        }
+    }
+
+    private void reportTerminalFailure(String id, Exception error) {
+        try {
+            JSONObject report = new JSONObject();
+            report.put("command_id", id);
+            report.put("error", safe(error.getMessage()));
+            request("/agent/report", "POST", report);
+        } catch (Exception ignored) {}
+        updateNotification("Terminal task failed: " + safe(error.getMessage()));
     }
 
     boolean isSameLocalSubnet(String target) {
@@ -380,7 +420,8 @@ public final class BridgeService extends Service {
         Lan lan = localLan();
         JSONObject result = new JSONObject();
         result.put("app", "LANLink TV Agent");
-        result.put("version", "0.3.3");
+        result.put("version", agentVersion());
+        try { result.put("linux_runtime", LinuxRuntimeManager.status(this)); } catch (Exception ignored) {}
         result.put("controller_paired", !SecureStore.readControllerToken(this).isEmpty());
         result.put("relay_configured", !SecureStore.read(this).isEmpty());
         result.put("bridge_ip", lan.ip);
