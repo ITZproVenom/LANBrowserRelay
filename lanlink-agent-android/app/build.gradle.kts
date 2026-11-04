@@ -11,8 +11,8 @@ android {
         applicationId = "com.itzprovenom.lanlinkagent"
         minSdk = 23
         targetSdk = 35
-        versionCode = 400
-        versionName = "0.4.0"
+        versionCode = 500
+        versionName = "0.5.0"
     }
 
     compileOptions {
@@ -48,5 +48,6 @@ android {
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("com.github.rhythmcache:adb-kt:394dea235b4bfb2ebbfba5a821bbe4f6cd59e460")
 }
