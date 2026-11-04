@@ -28,7 +28,7 @@ import java.util.zip.GZIPInputStream
  */
 internal object LinuxRuntimeManager {
     private const val ALPINE_VERSION = "3.24.3"
-    private const val MAX_ARCHIVE_BYTES = 24L * 1024L * 1024L
+    private const val MAX_ARCHIVE_BYTES = 64L * 1024L * 1024L
     private const val MAX_EXPANDED_BYTES = 512L * 1024L * 1024L
     private const val MAX_ENTRIES = 30_000
     private const val PROOT_NAME = "libproot.so"
@@ -38,7 +38,7 @@ internal object LinuxRuntimeManager {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(false)
+        .followRedirects(true)
         .followSslRedirects(false)
         .build()
 
@@ -51,6 +51,8 @@ internal object LinuxRuntimeManager {
         val binary = prootExecutable(context)
         return binary.isFile && binary.canExecute()
     }
+
+    fun canBootstrap(context: Context): Boolean = detectTarget() != null && hasBundledProot(context)
 
     fun isReady(context: Context): Boolean {
         if (!hasBundledProot(context)) return false
@@ -102,6 +104,9 @@ internal object LinuxRuntimeManager {
         if (isReady(context)) return@synchronized status(context)
         val target = detectTarget()
             ?: throw IOException("Unsupported Android ABI. Alpine runtime currently supports armeabi-v7a and arm64-v8a; legacy armeabi is not assumed compatible.")
+        if (context.filesDir.usableSpace < 100L * 1024L * 1024L) {
+            throw IOException("At least 100 MB of free app storage is required to bootstrap Alpine safely.")
+        }
         val proot = prootExecutable(context)
         if (!proot.isFile || !proot.canExecute()) {
             throw IOException("The Android PRoot executable is missing for this device ABI. Rebuild the TV agent with the NDK PRoot assets before bootstrapping Alpine.")
@@ -276,7 +281,7 @@ internal object LinuxRuntimeManager {
         var expanded = 0L
         var entries = 0
         TarArchiveInputStream(GZIPInputStream(BufferedInputStream(FileInputStream(archive)))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
+            var entry: TarArchiveEntry? = tar.nextTarEntry
             val buffer = ByteArray(32 * 1024)
             while (entry != null) {
                 entries += 1
@@ -288,12 +293,20 @@ internal object LinuxRuntimeManager {
                         applyMode(target, entry.mode)
                     }
                     entry.isSymbolicLink -> {
-                        val link = entry.linkName
-                        if (link.startsWith("/") || link.split("/").contains("..")) {
-                            throw IOException("Alpine archive contains an absolute or escaping symbolic link.")
-                        }
+                        // Alpine rootfs archives legitimately contain absolute
+                        // guest links such as /bin -> /usr/bin. Rewrite them as
+                        // equivalent relative links so the Android host never
+                        // follows a link outside the private extraction root.
+                        val entryParts = archivePathParts(entry.name)
+                        val targetParts = normalizeGuestLink(entryParts.dropLast(1), entry.linkName)
+                        val relativeLink = relativeGuestPath(entryParts.dropLast(1), targetParts)
                         target.parentFile?.let { if (!it.exists() && !it.mkdirs()) throw IOException("Could not create link parent.") }
-                        Os.symlink(link, target.absolutePath)
+                        if (target.exists()) throw IOException("Alpine archive contains a duplicate path.")
+                        Os.symlink(relativeLink, target.absolutePath)
+                        val canonical = target.canonicalFile
+                        if (!canonical.path.startsWith(root.path + File.separator) && canonical.path != root.path) {
+                            throw IOException("Alpine symbolic link escaped the rootfs.")
+                        }
                     }
                     entry.isLink -> {
                         val linkTarget = safeArchivePath(root, entry.linkName.removePrefix("./"))
@@ -321,17 +334,57 @@ internal object LinuxRuntimeManager {
                     }
                     else -> throw IOException("Alpine archive contains an unsupported special file: " + entry.name)
                 }
-                entry = tar.nextEntry
+                entry = tar.nextTarEntry
             }
         }
     }
 
-    private fun safeArchivePath(root: File, raw: String): File {
-        val name = raw.replace('\\', '/').removePrefix("./")
-        if (name.startsWith("/") || name.split("/").any { it == ".." }) {
-            throw IOException("Alpine archive contains a path traversal entry.")
+    private fun archivePathParts(raw: String): List<String> {
+        val name = raw.replace('\\', '/').removePrefix("./").trimEnd('/')
+        if (name.startsWith("/") || name.indexOf('\\u0000') >= 0) {
+            throw IOException("Alpine archive contains an absolute or invalid entry path.")
         }
-        val candidate = File(root, name).canonicalFile
+        val parts = ArrayList<String>()
+        for (part in name.split('/')) {
+            when (part) {
+                "", "." -> Unit
+                ".." -> throw IOException("Alpine archive contains a path traversal entry.")
+                else -> parts.add(part)
+            }
+        }
+        return parts
+    }
+
+    private fun normalizeGuestLink(parent: List<String>, link: String): List<String> {
+        if (link.isBlank() || link.indexOf('\\u0000') >= 0) {
+            throw IOException("Alpine archive contains an invalid symbolic link.")
+        }
+        val result = if (link.startsWith("/")) ArrayList<String>() else ArrayList(parent)
+        for (part in link.replace('\\', '/').split('/')) {
+            when (part) {
+                "", "." -> Unit
+                ".." -> {
+                    if (result.isEmpty()) throw IOException("Alpine symbolic link escapes the guest root.")
+                    result.removeAt(result.lastIndex)
+                }
+                else -> result.add(part)
+            }
+        }
+        return result
+    }
+
+    private fun relativeGuestPath(from: List<String>, to: List<String>): String {
+        var common = 0
+        while (common < from.size && common < to.size && from[common] == to[common]) common++
+        val result = ArrayList<String>()
+        repeat(from.size - common) { result.add("..") }
+        result.addAll(to.drop(common))
+        return if (result.isEmpty()) "." else result.joinToString("/")
+    }
+
+    private fun safeArchivePath(root: File, raw: String): File {
+        val parts = archivePathParts(raw)
+        val candidate = File(root, parts.joinToString("/")).canonicalFile
         val prefix = root.path + File.separator
         if (candidate.path != root.path && !candidate.path.startsWith(prefix)) {
             throw IOException("Alpine archive entry escaped the rootfs.")
@@ -374,7 +427,7 @@ internal object LinuxRuntimeManager {
             val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val network = manager.activeNetwork
             val properties = if (network != null) manager.getLinkProperties(network) else null
-            properties?.dnsServers?.map { it.hostAddress }?.filter { !it.isNullOrBlank() } ?: emptyList()
+            properties?.dnsServers?.map { it.hostAddress?.substringBefore("%") }?.filter { !it.isNullOrBlank() } ?: emptyList()
         } catch (_: Exception) {
             emptyList()
         }
