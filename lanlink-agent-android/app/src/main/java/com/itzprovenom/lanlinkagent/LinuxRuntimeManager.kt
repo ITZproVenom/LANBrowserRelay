@@ -79,6 +79,7 @@ internal object LinuxRuntimeManager {
         val ready = isReady(context)
         return JSONObject()
             .put("state", when {
+                Build.VERSION.SDK_INT < 28 -> "unsupported_android_api"
                 target == null -> "unsupported_architecture"
                 !hasBundledProot(context) -> "proot_missing"
                 ready -> "ready"
@@ -108,6 +109,9 @@ internal object LinuxRuntimeManager {
 
     fun bootstrap(context: Context): JSONObject = synchronized(bootstrapLock) {
         if (isReady(context)) return@synchronized status(context)
+        if (Build.VERSION.SDK_INT < 28) {
+            throw IOException("The bundled Android PRoot runtime targets Android API 28 or newer.")
+        }
         val target = detectTarget()
             ?: throw IOException("Unsupported Android ABI. Alpine runtime currently supports armeabi-v7a and arm64-v8a; legacy armeabi is not assumed compatible.")
         if (context.filesDir.usableSpace < BOOTSTRAP_FREE_BYTES) {
@@ -227,7 +231,8 @@ internal object LinuxRuntimeManager {
         File(context.applicationInfo.nativeLibraryDir ?: "", PROOT_NAME)
 
     private fun detectTarget(): AlpineTarget? {
-        val is64 = Build.VERSION.SDK_INT >= 23 && Process.is64Bit()
+        if (Build.VERSION.SDK_INT < 28) return null
+        val is64 = Process.is64Bit()
         val preferred = Build.SUPPORTED_ABIS.firstOrNull() ?: return null
         return when {
             is64 && preferred == "arm64-v8a" -> AlpineTarget("arm64-v8a", "aarch64")
