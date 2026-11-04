@@ -12,11 +12,11 @@ This directory contains the source of the LANLink relay Edge Function and the or
 - `public.lanlink_agent_enrollments` stores one-time activation-code hashes.
 - `public.lanlink_claim_commands(uuid, integer)` atomically claims queued commands using row locks with `SKIP LOCKED`.
 
-The Android TV is the LAN execution agent. The iPhone controller pairs with that TV over the private LAN. Supabase is the authenticated relay for ChatGPT/MCP requests; it is not a general-purpose remote shell.
+The Android TV is the LAN execution agent and hosts the persistent Alpine Linux rootfs, package manager and process sessions. The iPhone controller pairs with that TV over the private LAN. Supabase is the authenticated MCP/command relay; it queues work and returns results but does not execute Linux commands itself.
 
 ## Migration history
 
-Apply the files in `migrations/` in ascending timestamp order. The migration set corresponds to the seven migrations recorded by the production project as of 2026-11-04.
+Apply the files in `migrations/` in ascending timestamp order. The migration set includes the terminal command-kind expansion. The production project must be checked independently before deployment; the presence of a migration file in Git does not mean it has been applied.
 
 The initial schema migration intentionally does **not** insert the production MCP API-key hash or any TV-agent token hash. Those values are credentials, not schema. A clean database therefore needs fresh credentials provisioned through a trusted administrative process before the relay can accept MCP calls or enroll a TV.
 
@@ -51,4 +51,4 @@ The relay refuses to queue protocol commands unless the online agent advertises 
 
 ADB, SSDP, mDNS, ONVIF camera controls, and RTSP inspection remain unavailable until the TV agent implements and advertises them. Do not add a capability to the heartbeat merely to make a tool appear enabled.
 
-Commands expire after three minutes. Queue claiming is atomic, command results are accepted only for the executing agent, and sensitive command payload fields are redacted after execution or expiry.
+Ordinary queued LAN commands expire after three minutes. Terminal bootstrap jobs and long-running terminal executions receive bounded, operation-specific queue lifetimes (up to fifteen minutes). Queue claiming is atomic, command results are accepted only for the executing agent, and sensitive command payload fields are redacted after execution or expiry.
