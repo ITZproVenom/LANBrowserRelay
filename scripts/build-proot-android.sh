@@ -114,7 +114,7 @@ build_one() {
     local version_suffix
     version_suffix="$(echo "$PROOT_COMMIT" | cut -c1-8)"
     local common_cpp="-D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -DARG_MAX=131072 -DVERSION=\\\"termux-$version_suffix\\\" -I$prefix/include -I."
-    local common_c="-O2 -Wall -Wextra -fPIE"
+    local common_c="-O2 -Wall -Wextra -fPIE -DWITH_LIBANDROID_SHMEM"
     local common_ld="-L$prefix/lib -ltalloc -landroid-shmem -landroid -llog -Wl,-z,noexecstack -pie"
 
     make -C src clean
