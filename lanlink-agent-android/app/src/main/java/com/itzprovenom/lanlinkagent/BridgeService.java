@@ -46,11 +46,13 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class BridgeService extends Service {
@@ -79,7 +81,11 @@ public final class BridgeService extends Service {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService worker;
-    private final ExecutorService terminalExecutor = Executors.newFixedThreadPool(3);
+    private final ExecutorService terminalExecutor = new ThreadPoolExecutor(
+            3, 3, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(12),
+            new ThreadPoolExecutor.AbortPolicy()
+    );
     private String token = "";
     private LocalControlServer controlServer;
     private NsdManager nsdManager;
