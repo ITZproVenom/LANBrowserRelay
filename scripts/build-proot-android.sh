@@ -108,18 +108,18 @@ import sys
 path = Path(sys.argv[1])
 source = path.read_text()
 old_define = '#define ASHV_KEY_SYMLINK_PATH _PATH_TMP "ashv_key_%d"'
-old_use = '\\t\\tsprintf(symlink_path, ASHV_KEY_SYMLINK_PATH, key);'
-new_use = '''\\t\\tconst char *tmp_dir = getenv("PROOT_TMP_DIR");
-\\t\\tif (tmp_dir == NULL || tmp_dir[0] == '\\\\0') tmp_dir = "/tmp";
-\\t\\tint path_length = snprintf(symlink_path, sizeof(symlink_path), "%s%sashv_key_%d",
-\\t\\t\\t\\t     tmp_dir, tmp_dir[strlen(tmp_dir) - 1] == '/' ? "" : "/", key);
-\\t\\tif (path_length < 0 || (size_t)path_length >= sizeof(symlink_path)) {
-\\t\\t\\tpthread_mutex_unlock(&mutex);
-\\t\\t\\terrno = ENAMETOOLONG;
-\\t\\t\\treturn -1;
-\\t\\t}'''
+old_use = 'sprintf(symlink_path, ASHV_KEY_SYMLINK_PATH, key);'
+new_use = r'''const char *tmp_dir = getenv("PROOT_TMP_DIR");
+        if (tmp_dir == NULL || tmp_dir[0] == 0) tmp_dir = "/tmp";
+        int path_length = snprintf(symlink_path, sizeof(symlink_path), "%s%sashv_key_%d",
+                                   tmp_dir, tmp_dir[strlen(tmp_dir) - 1] == '/' ? "" : "/", key);
+        if (path_length < 0 || (size_t)path_length >= sizeof(symlink_path)) {
+            pthread_mutex_unlock(&mutex);
+            errno = ENAMETOOLONG;
+            return -1;
+        }'''
 if source.count(old_define) != 1 or source.count(old_use) != 1:
-    raise SystemExit("Pinned libandroid-shmem source no longer matches the expected Android _PATH_TMP patch context.")
+    raise SystemExit("Pinned libandroid-shmem source no longer matches the expected Android temp-path patch context.")
 source = source.replace(old_define, "")
 source = source.replace(old_use, new_use)
 path.write_text(source)
