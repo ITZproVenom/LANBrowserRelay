@@ -273,12 +273,12 @@ public final class BridgeService extends Service {
         capabilities.put("http");
         capabilities.put("wake-on-lan");
         capabilities.put("adb-control");
-        if (LinuxRuntimeManager.canBootstrap(this)) {
-            capabilities.put("terminal-bootstrap");
-            if (LinuxRuntimeManager.isReady(this)) {
+        // Status/bootstrap remain available even on an unsupported ABI so the
+        // MCP client can retrieve a truthful device diagnostic.
+        capabilities.put("terminal-bootstrap");
+        if (LinuxRuntimeManager.isReady(this)) {
                 capabilities.put("terminal-exec");
                 capabilities.put("linux-package-management");
-            }
         }
         heartbeat.put("capabilities", capabilities);
         request("/agent/heartbeat", "POST", heartbeat);
@@ -375,6 +375,10 @@ public final class BridgeService extends Service {
     private void executeTerminalCommand(String id, JSONObject payload) {
         try {
             JSONObject result = TerminalSessionManager.execute(this, payload);
+            if ("bootstrap".equals(payload.optString("operation", ""))) {
+                lastAgentMetadataHeartbeat = 0L;
+                try { publishAgentCapabilities(System.currentTimeMillis()); } catch (Exception ignored) {}
+            }
             JSONObject report = new JSONObject();
             report.put("command_id", id);
             report.put("result", result);
