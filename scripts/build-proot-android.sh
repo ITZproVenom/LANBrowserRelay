@@ -32,6 +32,22 @@ git clone --quiet https://github.com/termux/proot.git "$WORK/proot"
 git -C "$WORK/proot" checkout --quiet --detach "$PROOT_COMMIT"
 test "$(git -C "$WORK/proot" rev-parse HEAD)" = "$PROOT_COMMIT"
 
+# The pinned Termux Android fork's ashmem extension uses strcmp/memset but
+# omits the standard string header in its Android build branch.
+python3 - "$WORK/proot/src/extension/ashmem_memfd/ashmem_memfd.c" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = "#include <stdlib.h>\\n"
+if source.count(needle) != 1:
+    raise SystemExit("Pinned PRoot ashmem source changed; refusing an unverified header patch.")
+if "#include <string.h>" in source:
+    raise SystemExit("Pinned PRoot ashmem source already includes string.h; review this patch.")
+path.write_text(source.replace(needle, needle + "#include <string.h>\\n", 1))
+PY
+
 ANSWERS="$WORK/cross-answers.txt"
 cat > "$ANSWERS" <<'EOF'
 Checking uname sysname type: "Linux"
