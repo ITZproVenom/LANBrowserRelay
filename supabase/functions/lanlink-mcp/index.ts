@@ -56,10 +56,11 @@ async function authAgent(req: Request) {
   const { data, error } = await db.from("lanlink_agents").select("id,name,enabled").eq("token_hash", hash).eq("enabled", true).maybeSingle();
   return error ? null : data;
 }
-async function queue(agentId: string, kind: string, payload: Record<string, unknown>) {
+async function queue(agentId: string, kind: string, payload: Record<string, unknown>, ttlMs = 180000) {
+  const boundedTtlMs = Math.max(30_000, Math.min(ttlMs, 900_000));
   const { data, error } = await db.from("lanlink_commands").insert({
     agent_id: agentId, kind, payload, status: "queued",
-    expires_at: new Date(Date.now() + 180000).toISOString(),
+    expires_at: new Date(Date.now() + boundedTtlMs).toISOString(),
   }).select("id,created_at").single();
   if (error) throw error;
   return data;
@@ -79,7 +80,7 @@ async function onlineAgent(agentId?: string) {
 const allowedAgentCapabilities = new Set([
   "network-discovery", "tcp-probe", "http", "http-auth-basic", "wake-on-lan",
   "ssdp-discovery", "mdns-discovery", "onvif-discovery", "onvif-control",
-  "rtsp-probe", "adb-control", "terminal-exec"
+  "rtsp-probe", "adb-control", "terminal-bootstrap", "terminal-exec", "linux-package-management"
 ]);
 function requireCapability(agent: any, capability: string) {
   const caps = Array.isArray(agent.capabilities) ? agent.capabilities : [];
@@ -113,7 +114,7 @@ const tools = [
   { name: "lan_probe", description: "Probe common service ports on one private IPv4 address in the bridge's own subnet. Read-only.", inputSchema: { type: "object", properties: { ip: { type: "string", description: "Private IPv4 address on the local subnet." } }, required: ["ip"], additionalProperties: false } },
   { name: "lan_protocol_discover", description: "Discover local services using SSDP/UPnP, mDNS/Bonjour or ONVIF WS-Discovery. Multicast scope is limited to the bridge's LAN.", inputSchema: { type: "object", properties: { protocol: { type: "string", enum: ["ssdp","mdns","onvif"] } }, required: ["protocol"], additionalProperties: false } },
   { name: "lan_adb_command", description: "Control an Android device on the same LAN through ADB. Supports classic TCP ADB and Android 11+ Wireless Debugging TLS. Use action=pair with the current six-digit code and pairing port from the target Wireless debugging screen, then use transport=tls with its connection port for device actions. action=shell executes an arbitrary command through the target's authorized ADB shell, subject to target-side ADB permissions. The target must have ADB enabled and must authorize/pair with this bridge.", inputSchema: { type: "object", properties: { ip: { type: "string" }, action: { type: "string", enum: ["pair","info","apps","home","back","power","volume_up","volume_down","mute","play_pause","next","previous","dpad_up","dpad_down","dpad_left","dpad_right","select","launch_app","stop_app","reboot","shell"] }, transport: { type: "string", enum: ["tcp","tls"] }, port: { type: "integer", minimum: 1, maximum: 65535 }, pairing_port: { type: "integer", minimum: 1, maximum: 65535 }, pairing_code: { type: "string", minLength: 6, maxLength: 6, pattern: "^[0-9]{6}$" }, package: { type: "string" }, command: { type: "string", minLength: 1, maxLength: 16384 } }, required: ["ip","action"], additionalProperties: false } },
-  { name: "lan_terminal", description: "Open and operate a persistent Android shell session on the paired LANLink TV agent. Supports start, exec, write, read and close. Commands run as the LANLink Android app UID, not root, in a private app working directory. The environment is Android /system/bin/sh with the TV's installed system utilities, not a full Alpine Linux distribution. Sessions are in-memory and disappear when the agent process restarts; idle sessions expire automatically. Use lan_command_status to retrieve each queued operation's result.", inputSchema: { type: "object", properties: { operation: { type: "string", enum: ["start","exec","write","read","close"] }, session_id: { type: "string", minLength: 36, maxLength: 36 }, command: { type: "string", minLength: 1, maxLength: 16384 }, data: { type: "string", maxLength: 16384 }, cursor: { type: "integer", minimum: 0 }, timeout_ms: { type: "integer", minimum: 500, maximum: 60000 }, newline: { type: "boolean" } }, required: ["operation"], additionalProperties: false } },
+  { name: "lan_terminal", description: "Operate the persistent Alpine Linux execution environment hosted by the paired Android TV. First call operation=environment to inspect ABI, PRoot and Alpine state. If the runtime is not ready, call operation=bootstrap and poll lan_command_status until the rootfs is verified. Then call operation=start and use exec, write, read, cancel and close. Install packages directly with apk (for example apk add python3 py3-pip nodejs npm ffmpeg git curl wget). Shell commands run as the Android app UID with PRoot fake-root only inside the Alpine guest. The rootfs and /workspace persist across sessions and Android app restarts. Each terminal operation is queued asynchronously; use lan_command_status with the returned command_id to retrieve its result. The current transport is pipe-backed interactive shell, not full PTY emulation.", inputSchema: { type: "object", properties: { operation: { type: "string", enum: ["environment","status","bootstrap","start","exec","write","read","cancel","close"] }, session_id: { type: "string", minLength: 36, maxLength: 36 }, command: { type: "string", minLength: 1, maxLength: 16384 }, data: { type: "string", maxLength: 16384 }, cursor: { type: "integer", minimum: 0 }, stderr_cursor: { type: "integer", minimum: 0 }, timeout_ms: { type: "integer", minimum: 500, maximum: 600000 }, newline: { type: "boolean" } }, required: ["operation"], additionalProperties: false } },
   { name: "lan_camera_control", description: "Use ONVIF on a local camera: device information, capabilities, media profiles, snapshot URI and PTZ move/stop. Camera credentials are accepted for this one command and removed from the command queue after execution.", inputSchema: { type: "object", properties: { ip: { type: "string" }, port: { type: "integer", minimum: 1, maximum: 65535 }, action: { type: "string", enum: ["device_info","capabilities","profiles","snapshot_uri","ptz_move","ptz_stop"] }, endpoint: { type: "string" }, media_endpoint: { type: "string" }, ptz_endpoint: { type: "string" }, profile_token: { type: "string" }, username: { type: "string" }, password: { type: "string" }, pan: { type: "number", minimum: -1, maximum: 1 }, tilt: { type: "number", minimum: -1, maximum: 1 }, zoom: { type: "number", minimum: -1, maximum: 1 }, duration_seconds: { type: "number", minimum: 0.2, maximum: 3 } }, required: ["ip","action"], additionalProperties: false } },
   { name: "lan_rtsp_probe", description: "Inspect a local RTSP endpoint using OPTIONS and DESCRIBE. Returns authentication status and SDP metadata, not a playable video relay.", inputSchema: { type: "object", properties: { ip: { type: "string" }, port: { type: "integer", minimum: 1, maximum: 65535 }, path: { type: "string" }, username: { type: "string" }, password: { type: "string" } }, required: ["ip"], additionalProperties: false } },
   { name: "lan_http_request", description: "Send a bounded HTTP(S) request to a local device on the bridge's subnet. Supports custom headers or one-shot Basic credentials for device APIs. Only local RFC1918 destinations are allowed; configuration-changing calls require explicit user confirmation first.", inputSchema: { type: "object", properties: { ip: { type: "string" }, port: { type: "integer", minimum: 1, maximum: 65535 }, scheme: { type: "string", enum: ["http","https"] }, method: { type: "string", enum: ["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"] }, path: { type: "string", description: "Origin-form path beginning with /; no absolute URLs." }, content_type: { type: "string", enum: ["application/json","text/plain","application/xml","text/xml","application/soap+xml","application/x-www-form-urlencoded"] }, body: { type: "string", maxLength: 256000 }, headers: { type: "object", additionalProperties: { type: "string" } }, username: { type: "string" }, password: { type: "string" } }, required: ["ip","port","scheme","method","path"], additionalProperties: false } },
@@ -195,15 +196,18 @@ async function handleTool(name: string, args: Record<string, unknown>) {
   }
   if (name === "lan_terminal") {
     const operation = String(args.operation || "");
-    if (!["start","exec","write","read","close"].includes(operation)) throw new Error("Choose start, exec, write, read or close.");
+    const operations = ["environment","status","bootstrap","start","exec","write","read","cancel","close"];
+    if (!operations.includes(operation)) throw new Error("Choose environment, status, bootstrap, start, exec, write, read, cancel or close.");
     const payload: Record<string, unknown> = { operation };
+    const needsSession = !["environment","status","bootstrap","start"].includes(operation);
     const sessionId = args.session_id;
-    if (operation !== "start") {
+    if (needsSession) {
       if (typeof sessionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) {
         throw new Error("A valid terminal session_id is required for this operation.");
       }
       payload.session_id = sessionId;
     }
+    let queueTtlMs = 180000;
     if (operation === "exec") {
       const command = args.command;
       if (typeof command !== "string" || command.trim().length === 0 || command.length > 16384 || command.includes("\u0000")) {
@@ -211,9 +215,11 @@ async function handleTool(name: string, args: Record<string, unknown>) {
       }
       payload.command = command;
       const timeout = args.timeout_ms === undefined ? 30000 : Number(args.timeout_ms);
-      if (!Number.isInteger(timeout) || timeout < 500 || timeout > 60000) throw new Error("timeout_ms must be between 500 and 60000.");
+      if (!Number.isInteger(timeout) || timeout < 500 || timeout > 600000) throw new Error("timeout_ms must be between 500 and 600000.");
       payload.timeout_ms = timeout;
+      queueTtlMs = Math.min(900000, timeout + 60000);
     }
+    if (operation === "bootstrap") queueTtlMs = 900000;
     if (operation === "write") {
       const data = args.data;
       if (typeof data !== "string" || data.length > 16384 || data.includes("\u0000")) throw new Error("Terminal input must be at most 16,384 characters and contain no NUL bytes.");
@@ -225,12 +231,19 @@ async function handleTool(name: string, args: Record<string, unknown>) {
     }
     if (operation === "read") {
       const cursor = args.cursor === undefined ? 0 : Number(args.cursor);
+      const stderrCursor = args.stderr_cursor === undefined ? 0 : Number(args.stderr_cursor);
       if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("cursor must be a non-negative safe integer.");
+      if (!Number.isSafeInteger(stderrCursor) || stderrCursor < 0) throw new Error("stderr_cursor must be a non-negative safe integer.");
       payload.cursor = cursor;
+      payload.stderr_cursor = stderrCursor;
     }
     const agent = await onlineAgent();
-    requireCapability(agent, "terminal-exec");
-    return { queued: true, ...(await queue(agent.id, "terminal", payload)), agent: agent.name, operation };
+    const requiredCapability = ["environment","status","bootstrap"].includes(operation) ? "terminal-bootstrap" : "terminal-exec";
+    requireCapability(agent, requiredCapability);
+    if (["start","exec","write","read","cancel","close"].includes(operation)) {
+      requireCapability(agent, "linux-package-management");
+    }
+    return { queued: true, ...(await queue(agent.id, "terminal", payload, queueTtlMs)), agent: agent.name, operation, queue_ttl_ms: queueTtlMs };
   }
   if (name === "lan_camera_control") {
     const ip = String(args.ip || "");
@@ -492,7 +505,7 @@ Deno.serve(async (req: Request) => {
     try {
       if (method === "notifications/initialized" || method === "notifications/cancelled") return new Response(null, { status: 202, headers: cors });
       if (method === "initialize") {
-        return json({ jsonrpc: "2.0", id, result: { protocolVersion: body.params?.protocolVersion || "2025-03-26", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "LANLink", version: "0.2.0" }, instructions: "LANLink securely relays local network discovery, authenticated device APIs, Android ADB controls, SSDP/mDNS/ONVIF discovery, ONVIF camera controls and RTSP inspection through a paired bridge. All targets are restricted to the owner's private LAN and each control is capability-gated." } }, 200, { "Mcp-Protocol-Version": "2025-03-26" });
+        return json({ jsonrpc: "2.0", id, result: { protocolVersion: body.params?.protocolVersion || "2025-03-26", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "LANLink", version: "0.5.0" }, instructions: "LANLink securely relays local network discovery, authenticated device APIs, authorized Android ADB controls and a persistent Alpine Linux terminal hosted by the paired Android TV. Inspect the runtime with lan_terminal operation=environment; bootstrap it if needed; then start a session and install packages with apk as required. All device targets are restricted to the owner's private LAN and capability-gated." } }, 200, { "Mcp-Protocol-Version": "2025-03-26" });
       }
       if (method === "ping") return json({ jsonrpc: "2.0", id, result: {} });
       if (method === "tools/list") return json({ jsonrpc: "2.0", id, result: { tools } }, 200, { "Mcp-Protocol-Version": "2025-03-26" });
