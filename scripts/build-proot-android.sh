@@ -19,8 +19,13 @@ PROOT_COMMIT="52d65a4dc140ca554d241a1438ddd4f6b00c9813"
 TALLOC_VERSION="2.5.0"
 TALLOC_SHA256="912afa237510ae542a7733998eb18a12bcda35ab6729c8e2ddb43e8d0ebab007"
 TALLOC_URL="https://www.samba.org/ftp/talloc/talloc-$TALLOC_VERSION.tar.gz"
+SHMEM_VERSION="0.7"
+SHMEM_SHA256="1e5ff8459bc0a8c229dd8a94b27d119987e09ef3414331c2b5ebfff20b98e867"
+SHMEM_URL="https://github.com/termux/libandroid-shmem/archive/refs/tags/v${SHMEM_VERSION}.tar.gz"
 
 curl --fail --location --retry 3 "$TALLOC_URL" -o "$WORK/talloc.tar.gz"
+curl --fail --location --retry 3 "$SHMEM_URL" -o "$WORK/libandroid-shmem.tar.gz"
+echo "$SHMEM_SHA256  $WORK/libandroid-shmem.tar.gz" | sha256sum --check --status
 echo "$TALLOC_SHA256  $WORK/talloc.tar.gz" | sha256sum --check --status
 
 git clone --quiet https://github.com/termux/proot.git "$WORK/proot"
@@ -90,6 +95,17 @@ build_one() {
     install -m 0644 "$TALLOC_HEADER" "$prefix/include/talloc.h"
   )
 
+  local shmem="$WORK/libandroid-shmem-$abi"
+  mkdir -p "$shmem"
+  tar -xzf "$WORK/libandroid-shmem.tar.gz" --strip-components=1 -C "$shmem"
+  (
+    cd "$shmem"
+    CC="$clang" AR="$TOOLCHAIN/bin/llvm-ar" RANLIB="$TOOLCHAIN/bin/llvm-ranlib" \
+      CFLAGS="-O2 -fPIC" make libandroid-shmem.a
+    install -m 0644 libandroid-shmem.a "$prefix/lib/libandroid-shmem.a"
+    install -D -m 0644 shm.h "$prefix/include/sys/shm.h"
+  )
+
   cp -a "$WORK/proot" "$proot"
   local out="$ROOT/lanlink-agent-android/app/src/main/jniLibs/$abi"
   mkdir -p "$out"
@@ -97,9 +113,9 @@ build_one() {
     cd "$proot"
     local version_suffix
     version_suffix="$(echo "$PROOT_COMMIT" | cut -c1-8)"
-    local common_cpp="-D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -DVERSION=\\\"termux-$version_suffix\\\" -I$prefix/include -Isrc"
+    local common_cpp="-D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -DARG_MAX=131072 -DVERSION=\\\"termux-$version_suffix\\\" -I$prefix/include -Isrc"
     local common_c="-O2 -Wall -Wextra -fPIE"
-    local common_ld="$prefix/lib/libtalloc.a -Wl,-z,noexecstack -pie"
+    local common_ld="-L$prefix/lib -ltalloc -landroid-shmem -landroid -llog -Wl,-z,noexecstack -pie"
 
     make -C src clean
     make -C src build.h proot \
@@ -110,7 +126,8 @@ build_one() {
       OBJDUMP="$TOOLCHAIN/bin/llvm-objdump" \
       CPPFLAGS="$common_cpp" \
       CFLAGS="$common_c" \
-      LDFLAGS="$common_ld"
+      LDFLAGS="$common_ld" \\
+      PROOT_WITH_LIBANDROID_SHMEM=true
 
     test -s src/proot
     "$TOOLCHAIN/bin/llvm-strip" src/proot
