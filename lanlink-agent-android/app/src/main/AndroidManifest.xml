@@ -15,6 +15,7 @@
 
     <application
         android:allowBackup="false"
+        android:extractNativeLibs="true"
         android:label="LANLink TV Agent"
         android:banner="@drawable/lanlink_tv_banner"
         android:usesCleartextTraffic="true"
