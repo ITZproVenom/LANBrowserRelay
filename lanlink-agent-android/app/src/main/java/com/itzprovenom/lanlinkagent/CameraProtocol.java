@@ -24,6 +24,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
 import android.util.Base64;
+import android.net.wifi.WifiManager;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -236,41 +237,55 @@ final class CameraProtocol {
         JSONArray devices = new JSONArray();
         java.util.HashSet<String> seen = new java.util.HashSet<>();
         long deadline = android.os.SystemClock.elapsedRealtime() + 2800L;
-        try (MulticastSocket socket = new MulticastSocket()) {
-            socket.setTimeToLive(1);
-            socket.setSoTimeout(350);
-            InetAddress group = InetAddress.getByName(WS_DISCOVERY_GROUP);
-            socket.send(new DatagramPacket(bytes, bytes.length, group, WS_DISCOVERY_PORT));
-            while (android.os.SystemClock.elapsedRealtime() < deadline) {
-                byte[] buffer = new byte[16384];
-                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                try {
-                    socket.receive(packet);
-                } catch (java.net.SocketTimeoutException timeout) {
-                    continue;
-                }
-                String sourceIp = packet.getAddress().getHostAddress();
-                if (!bridge.isSameLocalSubnet(sourceIp)) continue;
-                String response = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
-                Document doc;
-                try { doc = parseXml(response); } catch (Exception ignored) { continue; }
-                String xaddrs = firstText(doc, "XAddrs");
-                String types = firstText(doc, "Types");
-                String scopes = firstText(doc, "Scopes");
-                if (xaddrs.isEmpty()) continue;
-                for (String xaddr : xaddrs.trim().split("\\s+")) {
+        WifiManager wifi = (WifiManager) bridge.getApplicationContext()
+                .getSystemService(android.content.Context.WIFI_SERVICE);
+        WifiManager.MulticastLock multicastLock = null;
+        try {
+            if (wifi != null) {
+                multicastLock = wifi.createMulticastLock("lanlink-onvif-discovery");
+                multicastLock.setReferenceCounted(false);
+                multicastLock.acquire();
+            }
+            try (MulticastSocket socket = new MulticastSocket()) {
+                socket.setTimeToLive(1);
+                socket.setSoTimeout(350);
+                InetAddress group = InetAddress.getByName(WS_DISCOVERY_GROUP);
+                socket.send(new DatagramPacket(bytes, bytes.length, group, WS_DISCOVERY_PORT));
+                while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                    byte[] buffer = new byte[16384];
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     try {
-                        validateEndpoint(xaddr, sourceIp);
-                        if (!seen.add(xaddr)) continue;
-                        JSONObject item = new JSONObject();
-                        item.put("ip", sourceIp);
-                        item.put("endpoint", xaddr);
-                        if (!types.isEmpty()) item.put("types", clean(types, 500));
-                        if (!scopes.isEmpty()) item.put("scopes", clean(scopes, 1000));
-                        item.put("protocol", "ONVIF");
-                        devices.put(item);
-                    } catch (Exception ignored) {}
+                        socket.receive(packet);
+                    } catch (java.net.SocketTimeoutException timeout) {
+                        continue;
+                    }
+                    String sourceIp = packet.getAddress().getHostAddress();
+                    if (!bridge.isSameLocalSubnet(sourceIp)) continue;
+                    String response = new String(packet.getData(), packet.getOffset(), packet.getLength(), StandardCharsets.UTF_8);
+                    Document doc;
+                    try { doc = parseXml(response); } catch (Exception ignored) { continue; }
+                    String xaddrs = firstText(doc, "XAddrs");
+                    String types = firstText(doc, "Types");
+                    String scopes = firstText(doc, "Scopes");
+                    if (xaddrs.isEmpty()) continue;
+                    for (String xaddr : xaddrs.trim().split("\\s+")) {
+                        try {
+                            validateEndpoint(xaddr, sourceIp);
+                            if (!seen.add(xaddr)) continue;
+                            JSONObject item = new JSONObject();
+                            item.put("ip", sourceIp);
+                            item.put("endpoint", xaddr);
+                            if (!types.isEmpty()) item.put("types", clean(types, 500));
+                            if (!scopes.isEmpty()) item.put("scopes", clean(scopes, 1000));
+                            item.put("protocol", "ONVIF");
+                            devices.put(item);
+                        } catch (Exception ignored) {}
+                    }
                 }
+            }
+        } finally {
+            if (multicastLock != null && multicastLock.isHeld()) {
+                try { multicastLock.release(); } catch (Exception ignored) {}
             }
         }
         JSONObject result = new JSONObject();
