@@ -1,0 +1,80 @@
+# Curated IEEE OUI assignments used for offline LAN identification.
+# Format: hexadecimal prefix (6, 7, or 9 digits, no separators)|registered organization.
+# This is intentionally a common-vendor subset, not a complete IEEE registry.
+8CC7C3|NETLINK ICT
+B8220C|Apple, Inc.
+001B63|Apple, Inc.
+00000C|Cisco Systems, Inc.
+000142|Cisco Systems, Inc.
+00100B|Cisco Systems, Inc.
+001018|Broadcom
+0050F2|Microsoft Corporation
+000D3A|Microsoft Corporation
+000C29|VMware, Inc.
+005056|VMware, Inc.
+080027|PCS Systemtechnik GmbH
+B827EB|Raspberry Pi Foundation
+DCA632|Raspberry Pi Trading Ltd
+240AC4|Espressif Inc.
+30AEA4|Espressif Inc.
+3C6105|Espressif Inc.
+7C9EBD|Espressif Inc.
+84F3EB|Espressif Inc.
+A4CF12|Espressif Inc.
+ECFABC|Espressif Inc.
+3C5AB4|Google LLC
+546009|Google LLC
+F4F5D8|Google LLC
+00146C|NETGEAR
+001B2F|NETGEAR
+C03F0E|NETGEAR
+00055D|D-Link Corporation
+000D88|D-Link Corporation
+001195|D-Link Corporation
+00179A|D-Link Corporation
+001B11|D-Link Corporation
+50C7BF|TP-LINK TECHNOLOGIES CO.,LTD.
+14CC20|TP-LINK TECHNOLOGIES CO.,LTD.
+AC84C6|TP-LINK TECHNOLOGIES CO.,LTD.
+34CE00|Xiaomi Communications Co Ltd
+640980|Xiaomi Communications Co Ltd
+8CBEBE|Xiaomi Communications Co Ltd
+D4970B|Xiaomi Communications Co Ltd
+001632|Samsung Electronics Co.,Ltd
+001D25|Samsung Electronics Co.,Ltd
+002119|Samsung Electronics Co.,Ltd
+002339|Samsung Electronics Co.,Ltd
+28987B|Samsung Electronics Co.,Ltd
+A80600|Samsung Electronics Co.,Ltd
+001A92|ASUSTek COMPUTER INC.
+00248C|ASUSTek COMPUTER INC.
+04D4C4|ASUSTek COMPUTER INC.
+10BF48|ASUSTek COMPUTER INC.
+14DAE9|ASUSTek COMPUTER INC.
+001882|HUAWEI TECHNOLOGIES CO.,LTD
+00464B|HUAWEI TECHNOLOGIES CO.,LTD
+0C37DC|HUAWEI TECHNOLOGIES CO.,LTD
+101B54|HUAWEI TECHNOLOGIES CO.,LTD
+2008ED|HUAWEI TECHNOLOGIES CO.,LTD
+78D752|HUAWEI TECHNOLOGIES CO.,LTD
+001C62|LG Electronics
+001E75|LG Electronics
+0022A9|LG Electronics
+0019C5|Sony Corporation
+0024BE|Sony Corporation
+78843C|Sony Corporation
+000D4B|Roku, Inc.
+00156D|Ubiquiti Networks Inc.
+0418D6|Ubiquiti Networks Inc.
+245A4C|Ubiquiti Networks Inc.
+687251|Ubiquiti Networks Inc.
+2CC81B|MikroTik
+4C5E0C|MikroTik
+6C3B6B|MikroTik
+001DCF|ARRIS Group, Inc.
+002210|ARRIS Group, Inc.
+002662|ARRIS Group, Inc.
+001B21|Intel Corporate
+001E67|Intel Corporate
+001F3B|Intel Corporate
+0024D7|Intel Corporate

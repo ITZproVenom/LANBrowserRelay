@@ -1,0 +1,48 @@
+name: LANLink iOS
+
+on:
+  pull_request:
+    paths:
+      - "ios/LANLink/**"
+      - ".github/workflows/lanlink-ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ios/LANLink/**"
+      - ".github/workflows/lanlink-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build iOS app
+        run: |
+          xcodebuild \
+            -project ios/LANLink/LANLink.xcodeproj \
+            -scheme LANLink \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/lanlink-derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Package unsigned IPA
+        run: |
+          APP="$RUNNER_TEMP/lanlink-derived/Build/Products/Release-iphoneos/LANLink.app"
+          test -d "$APP"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/LANLink.app"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/LANLink-unsigned.ipa" Payload
+          test -s "$GITHUB_WORKSPACE/LANLink-unsigned.ipa"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lanlink-ios-unsigned-ipa
+          path: LANLink-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

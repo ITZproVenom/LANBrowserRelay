@@ -1,0 +1,521 @@
+import SwiftUI
+
+struct ContentView: View {
+    @EnvironmentObject private var agent: AgentService
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab = 0
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            DashboardView(onActivateRelay: { selectedTab = 3 })
+                .tabItem { Label("Overview", systemImage: "square.grid.2x2.fill") }
+                .tag(0)
+            DevicesView()
+                .tabItem { Label("Devices", systemImage: "point.3.connected.trianglepath.dotted") }
+                .tag(1)
+            ActivityView()
+                .tabItem { Label("Activity", systemImage: "waveform.path") }
+                .tag(2)
+            ControllerSettingsView()
+                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+                .tag(3)
+        }
+        .tint(.cyan)
+        .onChange(of: scenePhase) { phase in agent.handleScenePhase(phase) }
+        .onOpenURL { agent.handleIncomingURL($0) }
+    }
+}
+
+private struct DashboardView: View {
+    @EnvironmentObject private var agent: AgentService
+    let onActivateRelay: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("LANLink").font(.largeTitle.bold())
+                            Text("Android network controller").foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "tv.and.mediabox")
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(.cyan)
+                            .padding(14)
+                            .background(.cyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 18))
+                    }
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Circle().fill(agent.isConnected ? Color.green : Color.orange).frame(width: 9, height: 9)
+                            Text(agent.isConnected ? "ANDROID CONNECTED" : "ANDROID DISCONNECTED")
+                                .font(.caption.bold()).tracking(1.0)
+                            Spacer()
+                            Text(agent.bridgeAddress.isEmpty ? agent.androidHost : agent.bridgeAddress)
+                                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Text(agent.statusMessage)
+                            .font(.subheadline).foregroundStyle(.secondary)
+
+                        if agent.isConnected && agent.isRelayConfigured {
+                            Button {
+                                agent.isRunning ? agent.stop() : agent.start()
+                            } label: {
+                                Label(agent.isRunning ? "Pause ChatGPT relay" : "Start ChatGPT relay",
+                                      systemImage: agent.isRunning ? "pause.fill" : "play.fill")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(agent.isRunning ? .orange : .cyan)
+                        } else if agent.isConnected {
+                            Button(action: onActivateRelay) {
+                                Label("Activate ChatGPT relay", systemImage: "key.fill")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                        } else {
+                            Button {
+                                Task { await agent.connect() }
+                            } label: {
+                                Label("Search for Android TV", systemImage: "dot.radiowaves.left.and.right")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                        }
+                    }
+                    .padding(18)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+
+                    HStack(spacing: 12) {
+                        MetricCard(title: "Observed entries", value: "\(agent.devices.count)", icon: "network")
+                        MetricCard(title: "Controller", value: agent.isConnected ? "Online" : "Offline", icon: "iphone")
+                    }
+                    if !agent.scanSummary.isEmpty {
+                        Text(agent.scanSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Android agent").font(.headline)
+                        LabeledContent("TV address", value: agent.androidHost.isEmpty ? "Not paired" : agent.androidHost)
+                        LabeledContent("Control port", value: agent.portText)
+                        if !agent.subnet.isEmpty { LabeledContent("LAN subnet", value: agent.subnet) }
+                        if let contact = agent.lastRelayContact {
+                            Text("Last relay contact · \(contact.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(17)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+
+                    HStack(spacing: 12) {
+                        Button {
+                            Task { await agent.refresh() }
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity).padding(12)
+                        }
+                        .buttonStyle(.bordered)
+                        Button {
+                            Task { await agent.scanNow() }
+                        } label: {
+                            Label(agent.isScanning ? "Scanning…" : "Scan LAN", systemImage: "dot.radiowaves.left.and.right")
+                                .frame(maxWidth: .infinity).padding(12)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!agent.isConnected || agent.isScanning)
+                    }
+                }
+                .padding(18)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationBarHidden(true)
+            .task {
+                agent.startDiscovery()
+            }
+        }
+    }
+}
+
+private struct MetricCard: View {
+    let title: String
+    let value: String
+    let icon: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: icon).foregroundStyle(.cyan)
+            Text(value).font(.title.bold().monospacedDigit())
+            Text(title).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct DevicesView: View {
+    @EnvironmentObject private var agent: AgentService
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if agent.devices.isEmpty {
+                    ContentUnavailableView("No devices yet",
+                                           systemImage: "point.3.connected.trianglepath.dotted",
+                                           description: Text("LANLink is automatically searching for your Android TV agent. Once connected, scan its local network here."))
+                } else {
+                    List(agent.devices) { device in
+                        NavigationLink {
+                            DeviceDetailView(device: device)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(device.friendlyName ?? device.hostname ?? device.deviceType)
+                                        .font(.headline)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(device.ip).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                }
+                                HStack(spacing: 6) {
+                                    Text(device.deviceType)
+                                        .font(.caption.weight(.medium))
+                                    Text("·")
+                                    Text("\(device.identityConfidence.capitalized) confidence")
+                                        .font(.caption)
+                                    Spacer()
+                                    Circle()
+                                        .fill(device.identityConfidence == "high" ? Color.green : device.identityConfidence == "medium" ? Color.orange : Color.secondary)
+                                        .frame(width: 7, height: 7)
+                                }
+                                .foregroundStyle(.secondary)
+                                if let vendor = device.vendor, !vendor.isEmpty {
+                                    Text([vendor, device.model].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                } else if let manufacturer = device.manufacturer, !manufacturer.isEmpty {
+                                    Text([manufacturer, device.model].compactMap { $0 }.joined(separator: " · "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Text(device.discoverySource == "agent"
+                                     ? "LANLink Android agent"
+                                     : (device.tcpConfirmed
+                                        ? "TCP confirmed" + (device.services.isEmpty ? "" : " · " + device.services.joined(separator: "  ·  "))
+                                        : "ARP only · not TCP-confirmed"))
+                                    .font(.caption2)
+                                    .foregroundStyle(device.discoverySource == "agent" ? .cyan : (device.tcpConfirmed ? .green : .orange))
+                                if let mac = device.mac {
+                                    Text(mac.uppercased()).font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("Devices")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await agent.scanNow() }
+                    } label: {
+                        if agent.isScanning { ProgressView() }
+                        else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .disabled(!agent.isConnected || agent.isScanning)
+                    .accessibilityLabel("Scan local network using Android")
+                }
+            }
+        }
+    }
+}
+
+private struct DeviceDetailView: View {
+    @EnvironmentObject private var agent: AgentService
+    let device: ControllerDevice
+    @State private var portText = "80"
+    @State private var path = "/"
+
+    var body: some View {
+        Form {
+            Section("Identification") {
+                LabeledContent("Classification", value: device.deviceType)
+                LabeledContent("Confidence", value: device.identityConfidence.capitalized)
+                LabeledContent("Method", value: device.identityMethod.replacingOccurrences(of: "_", with: " "))
+                LabeledContent("IP address", value: device.ip)
+                if let friendly = device.friendlyName, !friendly.isEmpty {
+                    LabeledContent("Friendly name", value: friendly)
+                }
+                if let host = device.hostname {
+                    LabeledContent("Hostname", value: host)
+                    if let source = device.hostnameSource {
+                        LabeledContent("Name source", value: source)
+                    }
+                }
+                if let vendor = device.vendor, !vendor.isEmpty {
+                    LabeledContent("MAC vendor", value: vendor)
+                }
+                if let manufacturer = device.manufacturer, !manufacturer.isEmpty {
+                    LabeledContent("Manufacturer", value: manufacturer)
+                }
+                if let model = device.model, !model.isEmpty {
+                    LabeledContent("Model", value: model)
+                }
+                if let mac = device.mac { LabeledContent("MAC address", value: mac.uppercased()) }
+                LabeledContent("MAC type", value: device.macAddressType.replacingOccurrences(of: "_", with: " "))
+                LabeledContent("Vendor source", value: device.vendorLookupSource.replacingOccurrences(of: "_", with: " "))
+                LabeledContent("Discovery", value: device.discoverySource.replacingOccurrences(of: "_", with: " "))
+            }
+            if !device.identityEvidence.isEmpty {
+                Section("Why LANLink identified it this way") {
+                    ForEach(Array(device.identityEvidence.enumerated()), id: \.offset) { item in
+                        Label(item.element, systemImage: "checkmark.seal")
+                            .font(.footnote)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if !device.serviceFingerprints.isEmpty {
+                Section("Service fingerprints") {
+                    ForEach(Array(device.serviceFingerprints.enumerated()), id: \.offset) { item in
+                        Text(item.element)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            Section("Open services") {
+                LabeledContent("Ports", value: device.services.isEmpty ? "None detected" : device.services.joined(separator: ", "))
+            }
+            Section("Actions") {
+                Button {
+                    agent.probe(device)
+                } label: {
+                    Label("Probe device", systemImage: "stethoscope")
+                }
+                Button {
+                    agent.wake(device)
+                } label: {
+                    Label("Wake on LAN", systemImage: "power")
+                }
+                .disabled(device.mac == nil)
+            }
+            Section("HTTP request") {
+                TextField("Port", text: $portText).keyboardType(.numberPad)
+                TextField("Path", text: $path).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Send GET request") {
+                    guard let port = Int(portText), (1...65535).contains(port) else { return }
+                    agent.sendHTTP(ip: device.ip, port: port, scheme: port == 443 || port == 8443 ? "https" : "http", method: "GET", path: path)
+                }
+            }
+        }
+        .navigationTitle(device.friendlyName ?? device.hostname ?? device.deviceType)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ActivityView: View {
+    @EnvironmentObject private var agent: AgentService
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if agent.activity.isEmpty && agent.logs.isEmpty {
+                    ContentUnavailableView("No diagnostic events yet", systemImage: "waveform.path",
+                                           description: Text("Scan activity, relay health and Android agent diagnostics will appear here."))
+                } else {
+                    List {
+                        if !agent.logs.isEmpty {
+                            Section("Android diagnostics") {
+                                ForEach(agent.logs) { entry in
+                                    DisclosureGroup {
+                                        Text(entry.details.isEmpty ? "No additional details." : entry.details)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    } label: {
+                                        HStack(alignment: .top, spacing: 10) {
+                                            Circle()
+                                                .fill(entry.level == "ERROR" ? Color.red : entry.level == "WARN" ? Color.orange : Color.green)
+                                                .frame(width: 8, height: 8)
+                                                .padding(.top, 5)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(entry.event)
+                                                    .font(.subheadline.weight(.semibold))
+                                                Text(entry.message)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                Text("\(entry.level) · \(entry.timestamp.formatted(date: .omitted, time: .standard))")
+                                                    .font(.caption2.monospaced())
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !agent.activity.isEmpty {
+                            Section("Activity") {
+                                ForEach(agent.activity) { entry in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: entry.failed ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                                            .foregroundStyle(entry.failed ? .orange : .green)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(entry.title).font(.subheadline.weight(.semibold))
+                                            Text(entry.detail).font(.caption).foregroundStyle(.secondary)
+                                            Text(entry.date.formatted(date: .omitted, time: .shortened))
+                                                .font(.caption2).foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("Activity")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    ShareLink(item: agent.exportDiagnostics()) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    Button {
+                        Task { await agent.refresh() }
+                    } label: { Image(systemName: "arrow.clockwise") }
+                }
+            }
+        }
+    }
+}
+
+private struct ControllerSettingsView: View {
+    @EnvironmentObject private var agent: AgentService
+    @State private var activationCode = ""
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("AUTOMATIC CONNECTION")
+                            .font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Image(systemName: agent.isConnected ? "checkmark.circle.fill" : "dot.radiowaves.left.and.right")
+                                .font(.title2)
+                                .foregroundStyle(agent.isConnected ? .green : .cyan)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(agent.isConnected ? "Android TV connected" : "Searching for Android TV")
+                                    .font(.headline)
+                                Text(agent.statusMessage)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        if !agent.discoveredName.isEmpty {
+                            LabeledContent("Discovered service", value: agent.discoveredName)
+                        }
+                        if !agent.bridgeAddress.isEmpty {
+                            LabeledContent("TV address", value: agent.bridgeAddress)
+                        }
+                        if !agent.subnet.isEmpty {
+                            LabeledContent("Subnet", value: agent.subnet)
+                        }
+
+                        Button {
+                            agent.startDiscovery()
+                        } label: {
+                            Label("Search again", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.cyan)
+
+                        Text("LANLink automatically finds the Android TV agent on the same Wi-Fi or Ethernet network. No IP address, port, pairing code or manual token entry is needed. The first iPhone to claim an unpaired TV becomes its controller.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+
+                    if agent.isConnected && !agent.isRelayConfigured {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("CHATGPT RELAY ACTIVATION")
+                                .font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
+                            Text("The iPhone and TV are paired. Activate the relay once with the one-time code for this TV. The TV stores the resulting credential encrypted; it is not saved in the iPhone app.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            SecureField("64-character activation code", text: $activationCode)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .font(.system(.body, design: .monospaced))
+                                .padding(12)
+                                .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                            Button {
+                                Task {
+                                    await agent.provisionRelay(code: activationCode)
+                                    if !agent.hasPendingRelayCredential {
+                                        activationCode = ""
+                                    }
+                                }
+                            } label: {
+                                if agent.isProvisioningRelay {
+                                    ProgressView().frame(maxWidth: .infinity, minHeight: 44)
+                                } else {
+                                    Label(agent.hasPendingRelayCredential ? "Finish activation" : "Activate ChatGPT relay",
+                                          systemImage: "key.fill")
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                            .disabled(agent.isProvisioningRelay || (!agent.hasPendingRelayCredential && activationCode.trimmingCharacters(in: .whitespacesAndNewlines).count != 64))
+                            Text("Activation codes expire after a short time and can be used once. A pending activation can be safely retried from this screen.")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("SECURITY")
+                            .font(.caption.weight(.semibold)).tracking(1).foregroundStyle(.secondary)
+                        Text("The iPhone creates a random controller key and keeps it in Keychain. The TV stores the enrolled key using Android Keystore. Automatic first-time pairing is limited to the same private LAN and one controller. Use a trusted home network; resetting the Android app's data clears its enrolled controller.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                }
+                .padding(16)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Settings")
+        }
+    }
+}
