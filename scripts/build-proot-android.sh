@@ -103,6 +103,19 @@ build_one() {
     make -j2
     find bin/default -maxdepth 1 -type f -name 'talloc*.o' -print0 \
       | xargs -0 "$TOOLCHAIN/bin/llvm-ar" rcs "$prefix/lib/libtalloc.a"
+    # talloc 2.5.0's archive references Samba's rep_memset_explicit helper.
+    # Supply a volatile-byte implementation for Android bionic, which does
+    # not export memset_explicit/rep_memset_explicit on the supported API.
+    cat > "$WORK/rep_memset_explicit.c" <<'EOF'
+#include <stddef.h>
+void *rep_memset_explicit(void *block, int value, size_t size) {
+    volatile unsigned char *bytes = (volatile unsigned char *) block;
+    for (size_t i = 0; i < size; ++i) bytes[i] = (unsigned char) value;
+    return block;
+}
+EOF
+    "$clang" -O2 -fPIC -c "$WORK/rep_memset_explicit.c" -o "$WORK/rep_memset_explicit.o"
+    "$TOOLCHAIN/bin/llvm-ar" rcs "$prefix/lib/libtalloc.a" "$WORK/rep_memset_explicit.o"
     TALLOC_HEADER="$(find . -type f -name talloc.h -print -quit)"
     if [[ -z "$TALLOC_HEADER" ]]; then
       echo "talloc.h was not generated or included in the pinned talloc source." >&2
