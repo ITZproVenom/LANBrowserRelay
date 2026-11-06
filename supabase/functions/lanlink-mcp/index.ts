@@ -94,7 +94,7 @@ function redactSecrets(value: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
       const lower = key.toLowerCase();
-      if (/(password|authorization|credential|secret|token|private.?key|pairing.?code)/.test(lower) || ["body", "command", "script", "data"].includes(lower)) {
+      if (/(password|username|authorization|credential|secret|token|private.?key|pairing.?code)/.test(lower) || ["body", "command", "script", "data"].includes(lower)) {
         out[key] = "[redacted after execution]";
       } else {
         out[key] = redactSecrets(item);
