@@ -333,7 +333,7 @@ final class CameraProtocol {
         material.write(nonce);
         material.write(created.getBytes(StandardCharsets.UTF_8));
         material.write(password.getBytes(StandardCharsets.UTF_8));
-        String digest = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-1").digest(material.toByteArray()));
+        String digest = Base64.encodeToString(MessageDigest.getInstance("SHA-1").digest(material.toByteArray()), Base64.NO_WRAP);
         return "<wsse:Security s:mustUnderstand=\"1\""
                 + " xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\""
                 + " xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">"
