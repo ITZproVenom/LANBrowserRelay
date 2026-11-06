@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.text.SimpleDateFormat;
-import java.util.Base64;
+import android.util.Base64;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -325,7 +325,7 @@ final class CameraProtocol {
     private static String wsSecurityHeader(String username, String password) throws Exception {
         byte[] nonce = new byte[16];
         new SecureRandom().nextBytes(nonce);
-        String nonceBase64 = Base64.getEncoder().encodeToString(nonce);
+        String nonceBase64 = Base64.encodeToString(nonce, Base64.NO_WRAP);
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
         format.setTimeZone(TimeZone.getTimeZone("UTC"));
         String created = format.format(new Date());
@@ -462,7 +462,7 @@ final class CameraProtocol {
         if (challenge == null || challenge.isEmpty()) return null;
         if (challenge.regionMatches(true, 0, "Basic", 0, 5)) {
             String value = username + ":" + password;
-            return "Basic " + Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+            return "Basic " + Base64.encodeToString(value.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
         }
         if (!challenge.regionMatches(true, 0, "Digest", 0, 6)) return null;
         String realm = challengeValue(challenge, "realm");
