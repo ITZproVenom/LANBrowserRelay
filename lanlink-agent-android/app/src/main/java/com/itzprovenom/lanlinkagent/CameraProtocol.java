@@ -129,6 +129,18 @@ final class CameraProtocol {
             result.put("ip", ip);
             result.put("profile_token", profile);
             result.put("snapshot_uri", stripUserInfo(uri));
+            try {
+                Document streamDoc = soap(mediaEndpoint, ip,
+                        "http://www.onvif.org/ver10/media/wsdl/GetStreamUri",
+                        "<trt:GetStreamUri><trt:StreamSetup><tt:Stream>RTP-Unicast</tt:Stream>"
+                                + "<tt:Transport><tt:Protocol>RTSP</tt:Protocol></tt:Transport>"
+                                + "</trt:StreamSetup><trt:ProfileToken>" + xml(profile)
+                                + "</trt:ProfileToken></trt:GetStreamUri>", username, password);
+                String streamUri = firstText(streamDoc, "Uri");
+                if (!streamUri.isEmpty()) result.put("stream_uri", stripUserInfo(streamUri));
+            } catch (Exception streamError) {
+                result.put("stream_uri_error", clean(streamError.getMessage(), 240));
+            }
             return result;
         }
 
