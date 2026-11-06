@@ -40,6 +40,9 @@ android {
         }
         release {
             isMinifyEnabled = false
+            // Ship a one-time installable side-by-side APK while retaining the
+            // existing .debug app and its Android Keystore credentials.
+            signingConfig = signingConfigs.getByName("debug")
             buildConfigField("int", "LOCAL_CONTROL_PORT", "43821")
         }
     }
