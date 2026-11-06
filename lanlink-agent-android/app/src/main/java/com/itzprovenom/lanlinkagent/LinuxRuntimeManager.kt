@@ -355,7 +355,7 @@ internal object LinuxRuntimeManager {
 
     private fun archivePathParts(raw: String): List<String> {
         val name = raw.replace('\\', '/').removePrefix("./").trimEnd('/')
-        if (name.startsWith("/") || name.indexOf('\\u0000') >= 0) {
+        if (name.startsWith("/") || name.indexOf('\u0000') >= 0) {
             throw IOException("Alpine archive contains an absolute or invalid entry path.")
         }
         val parts = ArrayList<String>()
@@ -370,7 +370,7 @@ internal object LinuxRuntimeManager {
     }
 
     private fun normalizeGuestLink(parent: List<String>, link: String): List<String> {
-        if (link.isBlank() || link.indexOf('\\u0000') >= 0) {
+        if (link.isBlank() || link.indexOf('\u0000') >= 0) {
             throw IOException("Alpine archive contains an invalid symbolic link.")
         }
         val result = if (link.startsWith("/")) ArrayList<String>() else ArrayList(parent)
