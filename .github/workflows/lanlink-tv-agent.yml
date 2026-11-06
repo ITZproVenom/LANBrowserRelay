@@ -43,9 +43,24 @@ jobs:
           "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
       - name: Build Android PRoot executables
         run: bash scripts/build-proot-android.sh "$ANDROID_HOME/ndk/27.2.12479018"
-      - name: Assemble debug and side-by-side release APKs
+      - name: Assemble and test debug APK
         working-directory: lanlink-agent-android
-        run: gradle --no-daemon assembleDebug assembleRelease testDebugUnitTest lintDebug --stacktrace
+        shell: bash
+        run: |
+          set +e
+          gradle --no-daemon --console=plain assembleDebug testDebugUnitTest lintDebug --stacktrace > "$RUNNER_TEMP/lanlink-debug-gradle.log" 2>&1
+          status=$?
+          tail -n 180 "$RUNNER_TEMP/lanlink-debug-gradle.log"
+          exit "$status"
+      - name: Assemble side-by-side release APK
+        working-directory: lanlink-agent-android
+        shell: bash
+        run: |
+          set +e
+          gradle --no-daemon --console=plain assembleRelease --stacktrace > "$RUNNER_TEMP/lanlink-release-gradle.log" 2>&1
+          status=$?
+          tail -n 180 "$RUNNER_TEMP/lanlink-release-gradle.log"
+          exit "$status"
       - name: Verify APKs
         shell: bash
         run: |
