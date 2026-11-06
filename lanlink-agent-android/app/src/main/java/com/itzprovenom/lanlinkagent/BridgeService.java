@@ -279,6 +279,9 @@ public final class BridgeService extends Service {
         capabilities.put("http");
         capabilities.put("wake-on-lan");
         capabilities.put("adb-control");
+        capabilities.put("onvif-discovery");
+        capabilities.put("onvif-control");
+        capabilities.put("rtsp-probe");
         // Status/bootstrap remain available even on an unsupported ABI so the
         // MCP client can retrieve a truthful device diagnostic.
         capabilities.put("terminal-bootstrap");
@@ -359,6 +362,10 @@ public final class BridgeService extends Service {
                 result = wakeOnLan(payload);
             } else if ("adb".equals(kind)) {
                 result = AdbDeviceController.execute(this, payload);
+            } else if ("onvif".equals(kind)) {
+                result = CameraProtocol.onvif(this, payload);
+            } else if ("rtsp".equals(kind)) {
+                result = CameraProtocol.rtsp(this, payload);
             } else {
                 throw new IllegalArgumentException("Unsupported command kind: " + kind);
             }
