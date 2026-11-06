@@ -54,7 +54,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
 @MainActor
 final class AgentService: ObservableObject {
     static let defaultPort = "43821"
-    private static let candidatePorts: [UInt16] = [43822, 43821]
+    private static let candidatePorts: [UInt16] = [43821, 43822]
 
     @Published private(set) var isConnected = false
     @Published private(set) var isRunning = false
@@ -181,8 +181,8 @@ final class AgentService: ObservableObject {
     }
 
     /// The LANLink TV API returns this exact unauthenticated response on its
-    /// private control ports. Prefer the debug port so a new test build can
-    /// coexist with a previously installed release agent.
+    /// private control ports. Prefer the release port so a side-by-side camera-capable release agent
+    /// is selected before a legacy debug installation.
     private func isLANLinkAgent(at host: String) async -> UInt16? {
         guard Self.isPrivateIPv4(host) else { return nil }
 
