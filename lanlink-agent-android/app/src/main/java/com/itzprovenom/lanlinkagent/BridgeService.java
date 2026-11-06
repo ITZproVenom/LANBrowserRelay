@@ -605,6 +605,10 @@ public final class BridgeService extends Service {
             result = AdbDeviceController.execute(this, payload);
         } else if ("terminal".equals(kind)) {
             result = TerminalSessionManager.execute(this, payload);
+        } else if ("onvif".equals(kind)) {
+            result = CameraProtocol.onvif(this, payload);
+        } else if ("rtsp".equals(kind)) {
+            result = CameraProtocol.rtsp(this, payload);
         } else {
             throw new IllegalArgumentException("Unsupported command kind: " + kind);
         }
